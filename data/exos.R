@@ -2,6 +2,7 @@ library(dplyr)
 library(knitr)
 library(questionr)
 library(mapsf)
+library(sf)
 
 rpls2020 = readRDS('data/RPLS2020.RDS')
 
@@ -234,5 +235,12 @@ tab_cond_wtd
 tab_pct_wtd = cprop(tab_cond_wtd)
 tab_pct_wtd
 
+iris_fdc <- readRDS("data/map_iris.RDS")
 
+iris_fdc_nb <- merge(x= ex3a_aabb, y = iris_fdc, by.x = "PLG_IRIS", by.y = "CODE_IRIS")
 
+iris_fdc_nb <- st_as_sf(iris_fdc_nb, crs = st_crs(2154))
+
+iris_fdc_ze <- iris_fdc %>% filter(INSEE_COM %in% c("92049", "94003","75114","92046"))
+mf_map(x = iris_fdc_ze)
+mf_map(x = iris_fdc_nb, type = "prop", var = "nblogsoc_rpls", inches = 0.2)
