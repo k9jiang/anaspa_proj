@@ -1,0 +1,1792 @@
+---
+title: "Analyse spatiale et territoriale du logement social"
+author: "Claude Grasland, Université de Paris"
+subtitle: Formation Carthageo-Geoprisme 2022 
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+
+
+```{r setup, include=FALSE}
+
+library(knitr)
+library(xtable)
+library(survey)
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(questionr)
+library(sf)
+library(ggplot2)
+library(mapsf)
+library(mapview)
+library(RColorBrewer)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=FALSE,
+               prompt=FALSE,
+               tidy=FALSE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+
+# opts_knit$set(width=75)
+```
+
+
+
+# Introduction {-}
+
+
+# Données RP 2018
+
+
+## Définir le sujet
+
+Soit le sujet : *Logements sociaux et qualification des chefs de ménages *
+
+### Définir les "logements sociaux" 
+Logements HLM ? Logements SRU ?
+
+### Définir la notion de "qualification" ?
+Le diplôme le plus élevé ? le nombre d'années d'étude ? 
+
+### Définir la date
+Année 2018 uniquement ? Résultats du RP 2018 (2016-2020) ? 
+
+
+
+
+## Formuler des questions ou des hypothèses
+
+Qu'elles soient justes ou fausses, les hypothèses permettent de cadrer l'analyse.
+
+### Diplôme et logement social
+Les logements sociaux sont réservés aux ménages les moins diplômés
+
+### Âge et logement social
+Les logements sociaux sont réservés aux jeunes ménages 
+
+### Logement social et territoire
+Les logements sociaux sont concentrés dans certains quartiers
+
+###  Logement social, âge et diplômes
+Les personnes diplômés quittent les logements sociaux dès que leurs revenus progressent
+
+
+## Organiser le travail 
+
+Sutout dans le cadre d'un groupe !
+
+### Ne collecter que les données utiles pour répondre aux questions posées
+Afin de ne pas être tenté de partir dans toutes les directions
+
+### Archiver soigneusement les programmes et les résultats
+Afin de pouvoir reproduire ultérieurement les analyses sur une autre période, un autre territoire
+
+### Ne pas attendre d'avoir accumulé tous les résultats pour les commenter
+Car l'analyse peut suggérer des erreurs ou ouvrir de nouvelles pistes.
+
+### Partir des questions et non pas des outils
+Faute de quoi on va trouver des réponses (42 ...) sans savoir quelle est la question. 
+
+
+
+
+## Charger les données statistiques
+
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_ind<-readRDS("data/menag2018.RDS")
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+head(tab_ind[,1:5],2)
+```
+
+
+## Préparation de l'analyse 
+
+
+- Soit la relation entre logement en HLM (Y) et Diplôme le plus élevé du chef de ménage (X). Il s'agit de deux variables **catégorielles** (= qualitatives) que l'on va typiquement mettre en relation à l'aide d'un **tableau de contingence** et d'un **test du chi-2**. L'analyse statistique est simple sous R mais il faut tenir compte de trois difficultés
+
+- Le choix de la **population de référence** est important. Ici on va sélectionner les ménages dont la personne de référence est âgée de 25-39 ans
+
+- la sélection ou le regroupement  des **diplômes** est également important car cela va influer sur les résultats du test.
+
+- la **pondération des individus** doit également être prise en compte puisque le recensement est basé sur un sondage
+
+
+## Sélection des individus et des variables
+
+
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+#table(tab_ind$AGEMEN8)
+tab_sel<- tab_ind %>% 
+  filter(AGEMEN8 == "25") %>%
+  select(DIPLM,HLML, IPONDL) 
+
+
+```
+
+### résultats
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab_sel,4))
+```
+
+## Recodage des modalités
+
+On cherche le code des modalités CS1 ezt HLML dans le fichier des métadonnées
+
+```{r}
+meta<-readRDS("data/menag2018_meta.RDS")
+metasel <- meta %>% filter(COD_VAR %in% c("DIPLM", "HLML"))
+kable(metasel[,c(1,3,4)])
+```
+s
+
+On recode les modalités des deux variables en regroupant certaines CSP
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_sel$HLML<-as.factor(tab_sel$HLML)
+levels(tab_sel$HLML)<-c("HLM-O","HLM-N",NA)
+tab_sel$DIPLM<-as.factor(tab_sel$DIPLM)
+levels(tab_sel$DIPLM) <- c("< BAC","< BAC","< BAC","< BAC","< BAC","< BAC",
+                         "BAC","BAC",
+                         "BAC+123","BAC+123","> BAC+3","> BAC+3",NA)
+table(tab_sel$DIPLM)
+                        
+```
+
+### résultats
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab_sel,3))
+```
+
+## Création du tableau de contingence non pondéré (FAUX)
+
+La solution la plus simple semble être l'instruction *table()*
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_cont<-table(tab_sel$HLML,tab_sel$DIPLM)
+```
+
+### résultats
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(addmargins(tab_cont))
+```
+
+
+## Création du tableau de contingence pondéré (JUSTE)
+
+On pondère avec *wtd.table()* du package *questionr*.
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+library(questionr)
+tab_cont_wtd<-wtd.table(tab_sel$HLML,tab_sel$DIPLM,
+                        weights = tab_sel$IPONDL)
+```
+
+### résultats
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(round(addmargins(tab_cont_wtd),0))
+```
+
+
+## Comparaison des niveaux de dépendance automobile
+
+
+- Tableau non pondéré ... légèrement faux !
+
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+tab_pct<-cprop(tab_cont)
+knitr::kable(tab_pct,digits=1)
+```
+
+- Tableau pondéré ... juste !
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+tab_pct_wtd<-cprop(tab_cont_wtd)
+knitr::kable(tab_pct_wtd,digits=1)
+```
+
+
+## Visualisation du tableau de contingence
+
+On choisit l'orientation du tableau et on l'affiche avec plot()
+
+```{r, cache.comments=TRUE,comment=F,message=F, comment = F,error=FALSE,echo=T,fig.height=3,fig.width=6 }
+mytable<-wtd.table(tab_sel$DIPLM,tab_sel$HLML,weights = tab_sel$IPONDL)
+plot(mytable)
+```
+
+
+## Visualisation améliorée du tableau de contingence
+
+Tant qu'à faire, on améliore la figure avec des paramètres supplémentaires : 
+
+```{r, cache.comments=TRUE,comment=F,message=F, comment = F,error=FALSE,echo=F, fig.height=4,fig.width=6}
+plot(mytable, main = "Logements HLM & Diplôme CM", sub = "Source : INSEE - RP 2018", col=c("lightyellow","lightgreen"))
+```
+
+## Test du Chi-deux
+
+Ce test se réalise facilement sur le tableau de contingence avec l'instruction *chisq.test()* :
+
+```{r, cache.comments=TRUE,comment=F,message=F, comment = "",error=FALSE,echo=T}
+mytest<-chisq.test(mytable)
+mytest
+```
+
+## Visualisation des résidus
+
+Lorsque la relation est significative, on visualise les cases les plus exceptionnelles avec *mosaicplot( ..., shade = T)*
+```{r, cache.comments=TRUE,comment=F,message=F, comment = F,error=FALSE,echo=F, fig.height=4,fig.width=6}
+mosaicplot(mytable, main =  "Logements HLM & diplôme CM", sub = "Source : INSEE - RP 2018", shade =T)
+```
+
+
+
+
+
+
+# Localisation aréale (sf) 
+
+
+##  Le format sf (spatial features)
+
+La cartographie et plus généralement les opérations géométriques sur des données spatiales dans R peuvent facilement être effectuées avec le **package sf** (spatial features) qui crée des objets uniques  rassemblant à la fois 
+
+- un tableau de données (l'équivalent du fichier .dbf)
+- une géométrie (l'équivalent du fichier .shp)
+- une projection (l'équivalent du fichier .prj)
+
+Lorsqu'on récupère des fonds de carte au format shapefile (.shp) ou dans d'autres formats standards comme GeoJson, la première tâche consiste donc à les convertir au formt sf afin de pouvoir les utiliser facilement dans R. L'importation se fait à l'aide de l'instruction `st_read` en indiquant juste le nom du fichier .shp à charger. Les autres fichiers (.dbf ou .proj) seront lus également et intégrés dans l'objet qui hérite de la double classe *data.frame* et *sf*.
+
+##  Etapes de préparation des données
+
+Dans notre exemple, nous allons suivre les étapes suivantes :
+
+1. Préparer les données statistiques par IRIS dans un *data.frame*
+2. Charger un fonds de carte par IRIS au format *sf*
+3. Effectuer une jointure entre les deux fichiers par le code IRIS
+4. Sauvegarder le résultat
+5. Agréger les données statistiques et géométriques par commune
+6. Sauvegarder le résultat.
+
+
+
+
+
+
+
+## Préparer les données statistiques
+
+On importe le fichier des individus :
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_ind<-readRDS("data/menag2018.RDS")
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+head(tab_ind[,1:5],3)
+```
+
+
+##  Agréger les données 
+
+On commence par créer un *tableau long* croisant les deux variables et leur effectif pondéré : 
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_long<- tab_ind %>%
+           filter(HLML != "Y")%>%
+           group_by(IRIS,HLML)%>%
+           summarise(NB=sum(IPONDL))
+
+
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab_long,5),digits=2)
+```
+
+##  Pivoter le tableau
+
+Puis on fait "pivoter" le tableau pour l'obtenir en format large :
+
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_large <- tab_long %>% pivot_wider(id_cols = IRIS, 
+                                      names_from = HLML,
+                                      names_prefix = "HLM_",
+                                      values_from = NB,
+                                      values_fill = 0)
+```
+
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab_large,5),digits=2)
+```
+
+## Ajouter de nouvelles variables
+
+On ajoute de nouvelles variables telles que le nombre total de ménage et le % de ménages en HLM : 
+
+
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab<- tab_large %>% mutate(TOT = HLM_1+HLM_2,
+                           HLM_pct = 100*HLM_1/TOT)
+```
+
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab,5),digits=2)
+```
+
+## Examiner la distribution statistique 
+
+On examine l'histogramme donnant distribution statistique du % de ménages ordinaires résidant en HLM par IRIS.
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+p <- ggplot(tab) + aes (x = HLM_pct) +
+                   geom_histogram(breaks = c(0,10,20,30,40,50,
+                                             60,70,80,90, 100)) +
+                   scale_x_continuous("% de ménages en HLM") +
+                   scale_y_continuous("Nombre d'IRIS") +
+                   ggtitle(label = "Distribution des logements sociaux dans Paris & PC",
+                           subtitle = "Source : INSEE, RP 2018")
+                            
+
+```
+
+### résultat
+```{r, cache.comments=TRUE,warning=F,message=F, error=FALSE,echo=F, fig.width=6, fig.height = 4}
+p
+```
+
+
+
+
+
+
+
+## Charger les données géométriques
+
+On importe le fichier des iris du Val-de-Marne qui est au format sf en ne gardant que les colonnes utiles
+
+### programme
+```{r,comment=F,message=F, error=FALSE, comments = F, echo=T}
+map_iris <- readRDS("data/map_iris.RDS")
+map_iris<-map_iris[,c(4,5,1,2,7)]
+names(map_iris)<-c("IRIS","NOM_IRIS","COM","NOM_COM","geometry")
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+class(map_iris)
+knitr::kable(head(as.data.frame(map_iris)[,1:4],2))
+```
+
+
+## Visualisation du fonds iris avec sf
+
+On peut facilement produire une carte vierge des iris du Grand Paris en faisant un plot de la colonne *geometry* du fichier sf
+
+```{r,comment=F,message=F, error=FALSE, comments = F, echo=T, fig.width=5, fig.height=4}
+plot(map_iris$geometry,col="lightyellow")
+```
+
+
+
+
+
+
+## Jointure des données IRIS et du fonds de carte
+
+### programme 
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T,warning=F}
+map_iris_tab<-merge(map_iris,tab,
+                   by.x="IRIS",by.y="IRIS",
+                   all.x=T,all.y=F)
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(map_iris_tab,3),digits=2)
+```
+
+## Sauvegarde du fichier par IRIS
+
+On sauvegarde notre fichier au format .RDS de R 
+
+
+```{r,comment=F,message=F, error=FALSE,echo=T,warning=F}
+saveRDS(map_iris_tab,"data/map_iris_hlm.RDS")
+```
+
+
+
+## Agrégation statistique + géométriques
+
+Grâce aux nouveaux packages de R (*dplyr* et *sf*) il est possible d'**agréger simultanément les statistiques et les géométries** après les avoir stockés dans un même objet de type "sf"
+
+Du coup, on peut gagner beaucoup de temps dans les traitements et les analyses cartographiques, en particulier si l'on veut tester différents niveaux d'agrégation.
+
+
+## Agrégation des IRIS en communes
+
+L'agrégation est très facile et elle concerne à la fois les variables (de stock) et les geometries
+
+### programme
+```{r,comment=F,message=F, error=FALSE,echo=T,warning=F}
+map_com_tab <- map_iris_tab %>% 
+  group_by(COM, NOM_COM) %>% 
+  summarise(HLM_1=sum(HLM_1,na.rm=T), 
+            HLM_2=sum(HLM_2,na.rm=T)) %>%
+  st_cast("MULTIPOLYGON")
+
+map_com_tab <- map_com_tab %>%  mutate(TOT = HLM_1+HLM_2,
+                                  HLM_pct = 100*HLM_1/TOT) 
+
+```
+
+
+
+### résultat statistique
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(st_drop_geometry(map_com_tab),3),digits=2)
+```
+
+
+### résultat géométrique
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+plot(map_com_tab$geometry,col ="lightyellow")
+```
+
+## Examiner la distribution statistique 
+
+On examine l'histogramme donnant distribution statistique du % de ménages ordinaires résidant en HLM par Commune.
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+p <- ggplot(map_com_tab) + aes (x = HLM_pct) +
+                   geom_histogram(breaks = c(0,10,20,30,40,50,
+                                             60,70,80,90,100)) +
+                   scale_x_continuous("% de ménages en HLM") +
+                   scale_y_continuous("Nombre de communes") +
+                   ggtitle(label = "Distribution des logements sociaux dans Paris et PC",
+                           subtitle = "Source : INSEE, RP 2018")
+                            
+
+```
+
+
+### résultat
+```{r, cache.comments=TRUE,warning=F,message=F, error=FALSE,echo=F, fig.width=6, fig.height = 4}
+p
+```
+
+
+
+
+
+
+
+
+## Sauvegarde du fichier par commune
+
+On sauvegarde notre fichier au format .RDS de R 
+
+
+```{r,comment=F,message=F, error=FALSE,echo=T,warning=F}
+saveRDS(map_com_tab,"data/map_com_hlm.RDS")
+```
+
+
+# Visualisation (mapsf)
+
+
+##  Le package map_sf
+
+
+Le package *mapsf* permet de réaliser des cartes statiques de très haute qualité. Il a en effet été mis au point par des cartographes et des géomaticiens professionnels de l'UMS RIATE. Il prend la suite du package *cartography* dont la maintenance demeurera assuré quelque temps encore mais ne fera plus l'objet de développements futurs. Le package *mapsf* présente l'avantage d'être totalement compatibvle avec le package *sf* ce qui n'était pas autant le cas pour le package *cartography*, plus ancien, et créé pour être compatible avec l'ancien package *sp*. 
+
+On trouvera la documentation du package mapsf à l'adresse suivante : 
+
+https://riatelab.github.io/mapsf/index.html
+
+
+## Création d'un template cartographique 
+
+Nous allons dans un premier temps apprendre à créer un fonds de carte vierge mais comportant tout l'habillage nécessaire ("template"). Pour cela nous allons charger différentes couches cartographiques correspondant respectivement au département, aux communes et aux iris : 
+
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+map_iris<-readRDS("data/map_iris.RDS")
+map_com <-readRDS("data/map_com.RDS")
+map_dep <-readRDS("data/map_dep.RDS")
+
+map_iris_hlm<-readRDS("data/map_iris_hlm.RDS")
+map_com_hlm<-readRDS("data/map_com_hlm.RDS")
+```
+
+
+
+
+
+## tracé d'un fonds de carte vierge
+
+La fonction `mf_map()` avec le paramètre `type = "base"`permet de tracer une carte vide
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+ mf_map(map_iris, type = "base")
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE,, fig.height = 5}
+ mf_map(map_iris, type = "base")
+```
+
+
+
+
+## Superposition de couches
+
+On peut toutefois ajouter toute une série de paramètres supplémentaire (`col=`, `border=`, `lwd=`, ...) et superposer plusieurs fonds de carte avec le paramètre `add = TRUE`.  L'ajout de la fonction `layout` permet de rajouter un cadre une légende.
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+# Trace les Iris avec des paramètres
+mf_map(map_iris,  type = "base", 
+       col = "lightyellow", border="gray50",lwd=0.3)
+# Ajoute les contours des communes
+mf_map(map_com,  type = "base", 
+       col = NA,border="red",lwd=0.6,
+       add = TRUE)
+# Ajoute les contours des département
+mf_map(map_dep,  type = "base", 
+       col = NA,border="red",lwd=2,
+       add = TRUE)
+# Ajoute un cadre, un titre et des sources
+mf_layout(title = "Paris & Petite Couronne", 
+          credits = "Sources : IGN et INSEE")
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE,, fig.height = 6}
+# Trace les Iris avec des paramètres
+mf_map(map_iris,  type = "base", 
+       col = "lightyellow", border="gray50",lwd=0.3)
+# Ajoute les contours des communes
+mf_map(map_com,  type = "base", 
+       col = NA,border="red",lwd=0.6,
+       add = TRUE)
+# Ajoute les contours des département
+mf_map(map_dep,  type = "base", 
+       col = NA,border="red",lwd=2,
+       add = TRUE)
+# Ajoute un cadre, un titre et des sources
+mf_layout(title = "Paris & Petite Couronne", 
+          credits = "Sources : IGN et INSEE")
+```
+
+
+## Ajout d'un thème
+
+On peut finalement modifier l'ensemble de la carte en lui ajoutant une instruction `mf_theme()` qui peut reprendre des styles existants ( *"default", "brutal", "ink", "dark", "agolalight", "candy", "darkula", "iceberg", "green", "nevermind", "jsk", "barcelona"*) mais aussi créer ses propres thèmes
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+#Choix du thème
+mf_theme("darkula")
+# Trace les Iris avec des paramètres
+mf_map(map_iris,  type = "base",
+       border="white",
+        lwd=0.3)
+# Ajoute les contours des communes
+mf_map(map_com,  type = "base", 
+       col = NA, lwd=1,
+       add = TRUE)
+# Ajoute les contours des département
+mf_map(map_dep,  type = "base", 
+       col = NA, lwd=2,
+       add = TRUE)
+# Ajoute un cadre, un titre et des sources
+mf_layout(title = "Paris & Petite Couronne", 
+          credits = "Sources : IGN et INSEE")
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE,, fig.height = 6}
+#Choix du thème
+mf_theme("darkula")
+# Trace les Iris avec des paramètres
+mf_map(map_iris,  type = "base",
+       border="white",
+        lwd=0.3)
+# Ajoute les contours des communes
+mf_map(map_com,  type = "base", 
+       col = NA, lwd=1,
+       add = TRUE)
+# Ajoute les contours des département
+mf_map(map_dep,  type = "base", 
+       col = NA, lwd=2,
+       add = TRUE)
+# Ajoute un cadre, un titre et des sources
+mf_layout(title = "Paris & Petite Couronne", 
+          credits = "Sources : IGN et INSEE")
+```
+
+
+
+## Ajout de texte
+
+On peut ajouter une couche de texte avec la fonction `mf_label()`. Par exemple, on va ajouter à la carte précédente le code insee des communes
+
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+
+mf_theme("agolalight")
+mf_map(...)
+mf_label(map_com, 
+         var="NOM_COM",
+         cex=0.4,
+         col="blue",
+         overlap = FALSE)
+# Ajoute un cadre, un titre et des sources
+mf_layout(title = "Communes et Iris du Val de Marne en 2017", 
+          frame = TRUE,
+          credits = "Sources : IGN et INSEE")
+
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE,, fig.height = 6}
+
+mf_theme("agolalight")
+
+# Trace les Iris avec des paramètres
+mf_map(map_iris, 
+       type = "base", 
+       col = "lightyellow",
+       border="gray80",
+       lwd=0.3)
+
+# Ajoute les contours des communes
+mf_map(map_com, 
+       type = "base", 
+       col = NA,
+       border="red",
+       lwd=1,
+       add = TRUE)
+
+# Ajoute les contours des département
+mf_map(map_dep,  type = "base", 
+       col = NA,border="red",lwd=2,
+       add = TRUE)
+
+# Ajoute les codes des communes
+mf_label(map_com, 
+         var="INSEE_COM",
+         cex=0.7, 
+         col="blue",
+         overlap = FALSE)
+
+# Ajoute un cadre, un titre et des sources
+mf_layout(title = "Département, communes et Iris en 2018", 
+          frame = TRUE,
+          credits = "Sources : IGN et INSEE")
+```
+
+
+
+## Carte de stock 
+
+Une *carte de stock* représente la localisation de quantités que l'on peut aditionner et dont le total a un sens. Par exemple un nombre d'habitants, un nombre de ménages, un nombre d'automobiles. Ce quantités doivent être représentées par des figures (cercles, carrés, ...) dont la *surface est proportionelle au stock* afin que l'oeil du lecteur puisse les aditionner visuellement. 
+
+Dans le package **mapsf**, on réalise ce type de carte à l'aide de la fonction `mf_map()`en lui donnant le paramètre `type="prop"`.
+
+On va tenter à titre d'exemple de représenter la distribution du nombre de ménages ordinaires occupant un logement HLM par IRIS : 
+
+
+## Carte de stock minimale 
+
+Les instructions minimales sont les suivantes : 
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+# Trace les contours des communes
+mf_map(x= map_iris, 
+       type = "base")
+
+# Ajoute le nombre de ménages par IRIS
+mf_map(x =map_iris_hlm, 
+      type ="prop",
+      var = "HLM_1",
+      add=TRUE)
+```
+
+Mais le résultat est peu satisfaisant car les cercles sont trop grands. Il faut en pratique toujours effectuer un réglage de ceux-ci avec l'instruction `inches=`
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE,, fig.height = 6}
+# Trace les contours des communes
+mf_map(x= map_iris, 
+       type = "base")
+
+# Ajoute le nombre de ménages par IRIS
+mf_map(x =map_iris_hlm, 
+      type ="prop",
+      var = "HLM_1",
+      add=TRUE)
+```
+
+Mais le résultat est peu satisfaisant car les cercles sont trop grands. Il faut en pratique toujours effectuer un réglage de ceux-ci avec l'instruction `inches=`
+
+
+## Carte de stock habillée 
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+mf_theme("agolalight")
+mf_map(map_iris, type = "base",  
+       col = "lightyellow",border="gray80", lwd=0.3)
+mf_map(map_com, type = "base", 
+       col = NA,border="black",lwd=1,add = TRUE)
+
+mf_map(map_iris_hlm, var = "HLM_1",type = "prop",
+  inches = 0.05, col = "red",leg_pos = "left",  
+  leg_title = "Nombre de ménages", add=TRUE)
+
+mf_layout(title = "Distribution des logements HLM en 2018", 
+          frame = TRUE,
+          credits = "Sources : IGN et INSEE")
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE,, fig.height = 6}
+
+mf_theme("agolalight")
+mf_map(map_iris, type = "base",  
+       col = "lightyellow",border="gray80", lwd=0.3)
+mf_map(map_com, type = "base", 
+       col = NA,border="black",lwd=1,add = TRUE)
+
+mf_map(map_iris_hlm, var = "HLM_1",type = "prop",
+  inches = 0.05, col = "red",leg_pos = "left",  
+  leg_title = "Nombre de ménages", add=TRUE)
+
+mf_layout(title = "Distribution des logements HLM en 2017", 
+          frame = TRUE,
+          credits = "Sources : IGN et INSEE")
+
+```
+
+## Carte choroplèthe 
+
+Une *carte choroplèthe ou d'intensité* représente un phénomène relatif dont la somme n'a pas de sens. Par exemple, il serait absurde d'aditionner les % de logement HLM des IRIS du Val de Marne. Ces variables d'intensité caractèrisent donc l'état général d'une zone (*choros*) et elles vont être représentées par une couleur appliquée à toute la surface de la zone, d'où leur nom de *cartes choroplèthes*. 
+
+La fonction du package **mapsf** adaptée aux variables d'intensité est la fonction `mf_map()`munie du paramètre `type = "choro"`. 
+
+On va prendre l'exemple du nombre de voitures par ménage.
+
+## Carte choroplèthe minimale
+
+Si on ne précise rien, la carte est réalisée à l'aide de la palette par défaut avec un découpage des classes en quantiles (effectifs égaux).
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+# Carte choroplèthe
+mf_map(
+  x = map_iris_hlm, 
+  var = "HLM_pct",
+  type = "choro")
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE,, fig.height = 6}
+# Carte choroplèthe
+mf_map(
+  x = map_iris_hlm, 
+  var = "HLM_pct",
+  type = "choro")
+```
+
+
+
+## Carte choroplèthe habillée
+
+On peut arriver à une carte beaucoup plus satisfaisante en contrôlant l'ensemble des paramètres de couleur et de découpage des classes. Puis en superposant les contours de communes au dessus de la carte des IRIS pour faciliter le repérage. 
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+mybreaks = c(0, 10,20,30,40,50,
+             60,70,80,90, 100)
+mypal <- mf_get_pal(n = c(5, 5), 
+                    pal = c("Greens", "Reds"))
+# Carte choroplèthe des iris
+mf_map( map_iris_hlm, var = "HLM_pct",
+        type = "choro",
+        breaks = mybreaks,pal = mypal, 
+        border=NA,
+       col_na = "gray80",leg_title = "% HLM",
+       leg_val_rnd = 0)
+# Contour des communes et cadre
+mf_map(map_com, type = "base", col = NA,
+       border="black",lwd=1,add = TRUE)
+mf_layout(title = "% de ménages en HLM au RP  2018", 
+          frame = TRUE,
+          credits = "Sources : IGN et INSEE")
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE,, fig.height = 6}
+mybreaks = c(0, 10,20,30,40,50,60,70,80,90, 100)
+mypal <- mf_get_pal(n = c(5, 5), pal = c("Greens", "Reds"))
+# Carte choroplèthe des iris
+mf_map( map_iris_hlm, var = "HLM_pct",type = "choro",
+  breaks = mybreaks,pal = mypal, border=NA,
+  col_na = "gray80",leg_title = "% HLM", leg_val_rnd = 0)
+# Contour des communes et cadre
+mf_map(map_com, type = "base", col = NA,
+       border="black",lwd=1,add = TRUE)
+mf_layout(title = "% de ménages en HLM au RP  2018", frame = TRUE,
+          credits = "Sources : IGN et INSEE")
+```
+
+## Carte stock + choroplèthe (1)
+
+On peut combiner les deux modes cartographiques par superposition :
+
+### programme
+
+```{r eval=FALSE, echo=TRUE}
+
+
+mf_theme("agolalight")
+
+# Choisit les classes
+mybreaks = c(0,5,10,20,40,80,100)
+
+# Trace la carte choroplèthe
+mf_map(
+  x = map_iris_hlm, 
+  var = "HLM_pct",
+  breaks = mybreaks,
+ # pal=mypal,
+ type = "choro",
+  border="white",
+  col_na = "gray80",
+ lwd=0.3,
+ leg_title = "% ménages", 
+ leg_val_rnd = 0,
+  
+)
+
+# Ajoute les cercles proportionnels
+
+mf_map(
+  x =map_iris_hlm, 
+  var = "HLM_1",
+  type = "prop",
+  inches = 0.06, 
+  col = "red",
+  leg_pos = "right",  
+  leg_title = "Nb ménages",
+  add=TRUE
+)
+# Ajoute les contours des communes
+mf_map(map_com, 
+       type = "base", 
+       col = NA,
+       border="black",
+       lwd=1,
+       add = TRUE)
+
+# Ajoute un cadre, un titre et des sources
+mf_layout(title = "Les ménages ordinaires en HLM  2018", 
+          frame = TRUE,
+          credits = "Sources : IGN et INSEE")
+
+
+```
+
+
+### Résultat
+```{r eval=TRUE,  echo=FALSE, fig.height = 6}
+
+
+mf_theme("agolalight")
+
+# Choisit les classes
+mybreaks = c(0,5,10,20,40,80,100)
+
+# Trace la carte choroplèthe
+mf_map(
+  x = map_iris_hlm, 
+  var = "HLM_pct",
+  breaks = mybreaks,
+ # pal=mypal,
+ type = "choro",
+  border="white",
+  col_na = "gray80",
+ lwd=0.3,
+ leg_title = "% ménages", 
+ leg_val_rnd = 0,
+  
+)
+
+# Ajoute les cercles proportionnels
+
+mf_map(
+  x =map_iris_hlm, 
+  var = "HLM_1",
+  type = "prop",
+  inches = 0.06, 
+  col = "red",
+  leg_pos = "right",  
+  leg_title = "Nb ménages",
+  add=TRUE
+)
+# Ajoute les contours des communes
+mf_map(map_com, 
+       type = "base", 
+       col = NA,
+       border="black",
+       lwd=1,
+       add = TRUE)
+
+# Ajoute un cadre, un titre et des sources
+mf_layout(title = "Les ménages ordinaires en HLM  2018", 
+          frame = TRUE,
+          credits = "Sources : IGN et INSEE")
+
+
+```
+
+
+## Carte stock + choroplèthe (2)
+
+Mais les cercles dissimuent alors les plages de couleur, aussi on peut utiliser le type `prop_choro` qui place la variable choroplèthe à l'intérieur des cercles
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+mf_theme("agolalight")
+mybreaks = c(0, 10,20,30,40,50,60,70,80,90, 100)
+mypal <- mf_get_pal(n = c(5, 5), pal = c("Greens","Reds"))
+mf_map(map_iris_hlm, type = "base",  
+       col = "gray80",border="white", lwd=0.3)
+mf_map(map_com, type = "base", 
+       col = NA,border="white",lwd=1,add = TRUE)
+mf_prop_choro( x = map_iris_hlm,  var = c("TOT", "HLM_pct"), 
+  inches = 0.06, col_na = "grey", pal=mypal,
+  breaks = mybreaks, nbreaks = 4, lwd = 0.1,
+  leg_pos = c("right", "left"),leg_val_rnd = c(0,0),
+  leg_title = c("nb. ménages", "% HLM"),
+  add = TRUE)
+mf_layout(title = "Les ménages ordinaires en HLM  2018", 
+          frame = TRUE, credits = "Sources : IGN et INSEE")
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE, fig.height = 6}
+mf_theme("agolalight")
+mybreaks = c(0, 10,20,30,40,50,60,70,80,90, 100)
+mypal <- mf_get_pal(n = c(5, 5), pal = c("Greens", "Reds"))
+mf_map(map_iris_hlm, type = "base",  
+       col = "gray80",border="white", lwd=0.3)
+mf_map(map_com, type = "base", 
+       col = NA,border="white",lwd=1,add = TRUE)
+mf_prop_choro( x = map_iris_hlm,  var = c("TOT", "HLM_pct"), 
+  inches = 0.06, col_na = "grey", pal=mypal,
+  breaks = mybreaks, nbreaks = 4, lwd = 0.1,
+  leg_pos = c("right", "left"),leg_val_rnd = c(0,0),
+  leg_title = c("nb. ménages", "% HLM"),
+  add = TRUE)
+mf_layout(title = "Les ménages ordinaires en HLM en 2018",
+        frame = TRUE, credits = "Sources : IGN et INSEE")
+```   
+
+# Données spatiales (RPLS, 2020)
+
+
+
+## Source
+
+Le répertoire des logements locatifs des bailleurs sociaux (RPLS) a pour objectif de dresser l’état global du parc de logements locatifs de ces bailleurs sociaux au 1er janvier d’une année. Il est alimenté par les informations transmises par les bailleurs sociaux. La transmission des informations pour la mise à jour annuelle du répertoire des logements locatifs est obligatoire. Les données sont ensuite géolocalisées à l'adresse et mis à disposition des utilisateurs sur le [**site du ministère de la transition écologique**](https://www.statistiques.developpement-durable.gouv.fr/logement) 
+
+Les fichiers sont disponibles en général par régions mais livrés par départements dans le cas de l'Ile de France. Nous allons utilisé ici le fichier du 1er janvier 2020 accessible à l'adresse suivante
+
+https://www.statistiques.developpement-durable.gouv.fr/le-parc-locatif-social-au-1er-janvier-2020-0
+
+
+## Métadonnées
+
+Le fichier de données brutes au format .csv est accompagné d'un document excel précisant le code des variables et la façon dont elles ont été obtenues.
+
+```{r, echo=FALSE}
+knitr::include_graphics("figures/RPLS_meta.png",dpi = 200)
+```
+
+
+## Spatialisation
+
+Le fichier indique pour chaque logement sa localisation précise en terme d'adresse mais aussi d'étage dans un immeuble. A partir de ces données qualitatives, l'INSEE a procédé à un géocodage qui aboutit à la création de deux champs  :
+
+- coordonnées de latitude et longitude non projetées 
+- coordonnées de position en projection Lambert officielle
+
+Selon les analyses on peut utiliser l'une ou l'autre de ces coordonnées. Mais la meilleur solution consiste à **créer un fichier de type sf (spatial features)** en coordonnées WGS94 qu'on pourra ensuite reprojeter dans le système de son choix. 
+
+
+
+## Stratégie
+
+Avant toute exploitation du fichier il est fortement recommandé d'analyser en détail les métadonnées et de définir une stratégie d'analyse. 
+
+1. **choisir une première zone d'étude** de petite taille et localisée de préférence dans un espace que l'on connaît bien.
+2. **choisir des variables intéressantes** dont l'on connaît bien la signification et dont on a analysé en détail les métadonnées 
+3. **vérifier la qualité des données** en regardant notamment le nombre de valeurs manquantes, le dégré de précision, etc. 
+4. **sélectionner des données auxiliaires** issues d'autres sources que l'on souhaite croiser avec celles du RPLS en s'assurant de leur compatibilité (espace, temps, définition, ...) 
+5. **Ajouter les coordonnées spatiales** et stocker le résultat dans un fichier de type sf comportant les indications de projection.
+
+
+## Importation du fichier 
+
+
+
+On importe le fichier enregistré au format RDS et on vérifie sa taille avec dim() et sont ype avec class()
+
+```{r}
+don <- readRDS("data/RPLS2020.RDS")
+dim(don)
+
+```
+
+Le tableau comporte 844302 lignes (chacune correspondant à un logement) et 73 variables (décrites dans les métadonnées).
+
+## Choix de la zone d'étude
+
+On décide de limiter notre analyse dans un premier temps à quatre communes voisines présentant des profils différents. On peut tester leur profil de respect de la loi SRU en 2019 sur l'application suivante : https://www.ecologie.gouv.fr/sru/
+
+- **Bonneuil-sur-Marne (94011)**: large excédent ( > 25% , pas de pénalité)
+- **Chennevières-sur-Marne (94019) ** : léger déficit (22.76%, 58 k€)
+- **Sucy-en-Brie: déficit (94071)** : (19.93% , 150k€ ) 
+- **Ormesson-sur Marne (94055)** : très fort déficit (2.29%, 665 k€)
+
+On relève leur code INSEE afin de pouvoir faciliter l'extraction des données.
+
+## Choix des variables 
+
+On va se limiter ici à un très petit nombre de variables 
+
+### variables de localisation
+- result_id : code de l'adresse
+- result_label : label de l'adresse
+- LIBCOM : nom de la commune
+- DEPCOM : code de la commune
+- latitude : coordonnées latitude
+- longitude: coordonnée longitude
+- X : coordonnée projetée (EPSG = 2154)
+- Y : coordonnée projetée (EPSG = 2154)
+
+### variables thématiques
+- CONSTRUCT : année de construction
+- SURFHAB : surface habitable en m2
+- NBPIECE : nombre de pièces
+
+
+
+
+
+## Extraction du fichier
+
+On applique la double sélection des individus et des variables en nous servant des fonctions `filter()`et `select()`du package dplyr.on aboutit ici à un fichier de 8139 lignes et 11 variables. 
+
+```{r}
+sel <- don %>% 
+  filter(DEPCOM %in% c("94011","94019",
+                       "94071","94055")) %>%
+  select(result_id, result_label,
+         DEPCOM, LIBCOM, 
+        latitude,longitude,X,Y,
+        CONSTRUCT,SURFHAB,NBPIECE) 
+
+dim(sel)
+```
+
+## Recodage et typage
+
+Certaines variables doivent être recodées ou changées de type afin de faciliter leur exploitation ultérieure par R.
+
+```{r}
+sel$DEPCOM <- as.character(sel$DEPCOM)
+sel$LIBCOM <- as.factor(sel$LIBCOM)
+sel$PLG_IRIS <- paste(sel$DEPCOM,sel$PLG_IRIS, sep = "")
+sel$SURFHAB <- as.numeric(sel$SURFHAB)
+
+```
+
+
+## Résumé rapide
+
+On analyse rapidement les variables thématiques choisies
+
+```{r, echo=FALSE}
+kable(summary(sel[,c(9,10,11)]),)
+```
+
+## Sauvegarde du fichier
+
+On sauvegarde le fichier obtenu au format .RDS afin de garder le formatage des variables : 
+
+```{r}
+saveRDS(sel,"data/sel_logt.RDS")
+```
+
+
+
+# Localisation spatiale
+
+
+
+## Retour sur sf
+
+Nous revenons sur le **package sf (spatial features)** que nous avons déjà rencontré au moment de la création de cartes thématiques par IRIS ou communes à l'aide du package `mapsf`. 
+
+Ici le package sf va être utilisé pour cartographier non pas des zones mais des localisations ponctuelles. Il pourra être à nouveau couplé avec le logiciel de **cartogaphie statique** comme mapsf , afin par exemple de placer les localisations des logements sociaux au dessus du fonds de carte des IRIS ou communes.
+
+Mais il pourra aussi servir de base à des **cartographies dynamiques** permettant de placer les points sur des réseaux de rue et plus généralement sur des "tuiles" cartographiques permettant d'effectur des zoom. On utilisera à cet effet d'autres packages comme `leaflet` ou sa version simplifiée `mapview`. 
+
+
+## Données ponctuelles
+
+Nous reprenons le fichier de localisation établi au chapitre précédent et nous ne conservons que 6 variables: 
+
+```{r}
+logt <- readRDS("data/sel_logt.RDS") %>%
+        select(adresse=result_id,
+               X,Y,
+               date = CONSTRUCT)
+
+```
+
+```{r, echo=FALSE}
+kable(head(logt,3))
+```
+
+
+## Données IRIS
+
+Nous chargeons par ailleurs le fichier des IRIS en ne gardant que la zone d'étude : 
+
+```{r}
+map_iris <- readRDS("data/map_iris.RDS") %>%
+         filter(INSEE_COM %in% c("94011","94019",
+                       "94071","94055"))
+  
+```
+
+```{r, echo=FALSE}
+kable(head(st_drop_geometry(map_iris),3))
+```
+
+
+## Agrégation par commune
+
+Rappel : on peut agréger les géométries d'un fonds sf. Ici on va créer le fonds de carte des communes. 
+
+```{r}
+map_com <- map_iris %>% group_by(INSEE_COM,NOM_COM) %>%
+                summarise() %>%
+                st_cast("MULTIPOLYGON")
+  
+```
+
+## Vérification de la projection
+
+Nous savons que les coordonnées X,Y du fichier logement sont projetées en EPS 2154. Mais quelle est la projection de notre fonds IRIS ? S'agit-il de la même ?
+
+```{r}
+st_crs(map_iris)$proj4string
+st_crs(2154)$proj4string
+```
+A priori il s'agit bien de la même  de sorte que les coordonnées X,Y devraient bien se superposer sur le fonds IRIS
+
+
+## Test de superposition
+
+### Programme
+```{r, eval=FALSE, echo=TRUE}
+par(mar=c(0,0,0,0))
+#trace les iris
+plot(map_iris$geometry, 
+     col="lightyellow", border="gray70",
+     lwd=0.2)
+# trace les communes     
+plot(map_com$geometry, 
+     col=NA, lwd=1, add=T)
+# ajoute les points
+points(x=logt$X,
+       y=logt$Y, 
+       cex=0.2,
+       col="red",
+       pch = 16)
+```
+
+
+
+### Résultat
+```{r, eval=TRUE, echo=FALSE, fig.width=4, fig.height=3}
+par(mar=c(0,0,0,0))
+#trace les iris
+plot(map_iris$geometry, 
+     col="lightyellow", border="gray70",
+     lwd=0.2)
+# trace les communes     
+plot(map_com$geometry, 
+     col=NA, lwd=1, add=T)
+# ajoute les points
+points(x=logt$X,
+       y=logt$Y, 
+       cex=0.2,
+       col="red",
+       pch = 16)
+```
+
+
+## fichier des adresses
+
+Nous allons maintenant établir un fichier de localisation des adresses en nous servant de l'identifiant unique fourni par l'INSEE.
+
+```{r}
+adr <- logt %>% select(adresse,X,Y) %>% 
+               filter(duplicated(adresse) == F) %>%
+               filter(is.na(X) ==F,is.na(Y)==F)
+
+
+```
+
+On constate qu'il n'y a que 652 adresses différentes alors que notre fichier fait état de 8139 logements. Une adresse regroupe donc en moyenne plus de 10 logements (habitat collectif).
+
+## Transformation en fichier sf
+
+La transformation de notre fichier initial au format sf est facile à réaliser avec la fonction `st_as_sf()`  du package sf. Mais il faut prendre garde de bien préciser le système de projection si l'on veut pouvoir ensuite l'utiliser.
+
+```{r}
+map_adr <- st_as_sf(adr, coords = c("X","Y"))
+st_crs(map_adr)<- 2154
+str(map_adr)
+
+```
+
+
+## Agrégation des logements
+
+Notre nouveau fichier sf permet désormais d'effectuer des jointures avec le fichier des logements sociaux. A titre d'exemple on peut désormais compter le nombre de logements par adresse et leur ancienneté moyenne.
+
+### programme
+```{r, echo=TRUE, eval=FALSE}
+logt_by_adr <- logt %>% 
+               group_by(adresse) %>%
+               summarise(nblog = n(),
+                         datemoy = mean(date))
+```
+
+
+### résultat
+```{r, echo=FALSE, eval=TRUE}
+logt_by_adr <- logt %>% 
+               group_by(adresse) %>%
+               summarise(nblog = n(),
+                         datemoy = mean(date))
+kable(head(logt_by_adr,10))
+
+
+```
+
+## Jointure 
+
+On peut désormais effectuer la jointure entre les données agrégées par adresse et le fichier sf de localisation des adresses :
+
+```{r}
+map_logt <- inner_join(logt_by_adr,map_adr) %>% st_as_sf()
+
+```
+
+
+## Cartographie avec mapsf
+
+On peut désormais utiliser les méthodes de cartographie déjà vues avec mapsf :
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+mf_theme("agolalight")
+mybreaks = c(1900, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020)
+mypal=brewer.pal(n = 8,name = "Spectral")
+mf_map(map_iris, type = "base",  
+       col = "gray80",border="white", lwd=0.3)
+mf_map(map_com, type = "base", 
+       col = NA,border="black",lwd=1,add = TRUE)
+mf_prop_choro( x = map_logt,  var = c("nblog", "datemoy"), 
+  inches = 0.08, col_na = "grey", pal=mypal,
+  breaks = mybreaks, nbreaks = 4, lwd = 0.1,
+  leg_pos = c("right", "left"),leg_val_rnd = c(0,0),
+  leg_title = c("nb. logements", "ancienneté"),
+  add = TRUE)
+mf_layout(title = "Les logements sociaux en 2020",
+        frame = TRUE, credits = "Sources : IGN et RPLS")
+```
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE, fig.height = 6}
+mf_theme("agolalight")
+mybreaks = c(1900, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020)
+library(RColorBrewer)
+mypal=brewer.pal(n = 8,name = "Spectral")
+mf_map(map_iris, type = "base",  
+       col = "gray80",border="white", lwd=0.3)
+mf_map(map_com, type = "base", 
+       col = NA,border="black",lwd=1,add = TRUE)
+mf_prop_choro( x = map_logt,  var = c("nblog", "datemoy"), 
+  inches = 0.08, col_na = "grey", pal=mypal,
+  breaks = mybreaks, nbreaks = 4, lwd = 0.1,
+  leg_pos = c("right", "left"),leg_val_rnd = c(0,0),
+  leg_title = c("nb. logements", "ancienneté"),
+  add = TRUE)
+mf_layout(title = "Les logements sociaux en 2020",
+        frame = TRUE, credits = "Sources : IGN et RPLS")
+```
+
+## Sauvegarde des fichiers cartographiques
+
+On sauvegarde nos différents fichiers cartographiques au format sf relatifs à la zone d'étude.
+
+
+```{r}
+saveRDS(map_com,"data/sel_map_com.RDS")
+saveRDS(map_iris,"data/sel_map_iris.RDS")
+saveRDS(map_logt,"data/sel_map_logt.RDS")
+```
+
+
+
+# Cartographie dynamique
+
+
+## Statique ou dynamique ?
+
+- **Cartographie statique**
+  - production d'**images fixes** de qualité
+  - respect strict des règles de la **sémiologie graphique** 
+  - choix libre d'une **projection adaptée** (e.g. EPSG 2154) 
+  - production de **documents imprimés** à finalité normative ou scientifiques
+  
+
+- **Cartographie dynamique**
+  - production d'**interfaces** consultables dans un **navigateur**. 
+  - modification possible de l'**échelle** et de l'**arrière-plan** 
+  - **projection imposée** par les "tuiles" (*EPSG 4326*)
+  - production de **documents interactifs** à finalité citoyenne ou exploratoire
+
+
+## Packages R de cartographie dynamique
+
+- **leaflet :  la référence**
+  - Une **librairie javascript** non liée à un langage (R, Python, html, ...)
+  - Disponible dans R sous forme de package
+  - Développement constant
+
+- **ggmap :  l'empire contre attaque**
+  - des outils cartogaphiques utilisant la syntaxe de tidyverse
+  - impose désormais un lien avec Google
+
+- **tmap :  une solution hybride**
+  - permet de passer facilement du mode statique au mode dynamique
+
+- **mapview : l'équivalent de mapsf**
+  - mis au point par des développeurs allemands
+  - facilite l'usage de leaflet
+  - en progrès constant (mais instable) 
+
+## Préparation des données
+
+On charge les fichiers au format sf et on les transforme en projection WGS94 (EPSG=4326), condition indispensable pour ajouter des "tuiles" dynamiques lors des zoom.  
+
+```{r}
+map_com <- readRDS("data/sel_map_com.RDS") %>%
+              st_transform(4326)
+map_iris <- readRDS("data/sel_map_iris.RDS") %>%
+              st_transform(4326)
+map_logt <- readRDS("data/sel_map_logt.RDS") %>%
+              st_transform(4326)
+```
+
+## Carte par défaut
+
+Mapview produit par défaut une carte dynamique du fichier sf. 
+
+```{r, eval=TRUE, echo=TRUE}
+mapview(map_logt)
+```
+
+
+
+
+## Superposition de couches
+
+On peut créer des couches et les aditionner avec '+' :
+
+```{r, eval=TRUE, echo=TRUE}
+m1 = mapview(map_com, zcol = "NOM_COM") 
+m2 = mapview(map_logt)
+m1+m2
+```
+
+
+
+## Exemple complet
+
+On va essayer de reproduire la carte statique faite avec mapsf
+
+```{r, eval=FALSE, echo=TRUE}
+# Carte des communes
+map1 <- mapview(map_com, lwd=1, legend= FALSE,
+                alpha.regions = 0.1)
+# Carte des iris
+map2 <- mapview(map_iris,lwd = 0.3, label= "NOM_IRIS",
+                legend= FALSE, alpha.regions = 0)
+# Carte des logements
+map3 <- mapview(map_logt,
+                zcol = "datemoy",
+                at = c(1900,1960, 1970,1980,
+                       1990,2000,2010, 2021),
+                col.regions = brewer.pal(8, "Spectral"),
+                cex= "nblog")
+map1+map2+map3
+```
+
+
+```{r, eval=TRUE, echo=FALSE}
+# Carte des communes
+map1 <- mapview(map_com, lwd=1, legend= FALSE,
+                alpha.regions = 0.1)
+# Carte des iris
+map2 <- mapview(map_iris,lwd = 0.3, label= "NOM_IRIS",
+                legend= FALSE, alpha.regions = 0)
+# Carte des logements
+map3 <- mapview(map_logt,
+                zcol = "datemoy",
+                at = c(1900,1960, 1970,1980,
+                       1990,2000,2010, 2021),
+                col.regions = brewer.pal(8, "Spectral"),
+                cex= "nblog")
+map1+map2+map3
+```
+
+
+# Annexe : Source des données {-}
+
+Cette annexe présente les sources des différentes données et leurs étapes de transformation préalable aux analyses
+
+## Données statistiques sur les logements ordinaires en 2018
+
+
+Nous partirons des fichiers détail de l'INSEE car, à la différence des tableaux prédéfinis,  ils permettent virtuellement toutes les formes de croisement d'indicateurs. Ils sont évidemment beaucoup plus volumineux, mais ce sera justement l'occasion pour les étudiants en data mining d'être confrontés à des problèmes d'optimisation et de big data. On trouve leur description détaillée sur le site de l'INSEE 
+
+https://www.insee.fr/fr/statistiques/5542867?sommaire=5395764#consulter
+
+
+Nous avons opté pour le fichier des individus localisés au canton-ou-ville qui présente une grande polyvalence d'usage puisqu'il permet de reconstituer des tableau agrégés ou l'unité de compte peut-être soit le ménage, soit l'individu selon le critère de pondération adopté.
+
+### Etape 1 : téléchargement des données et stockage temporaire 
+
+Nous allons télécharger ici le fichier des données pour la région Ile-de-France au format .csv et l'enregistrer dans un dossier spécial **tmp**  qui pourra ulétérieurement être détruit ou déplacé afin de libérer de la place
+
+N.B. Ce programme qui prend quelques minutes sera exécuté une seule fois. On ajoutera ensuite dans l'en-tête du chunk `eval=FALSE` ce qui veut dire que ce bloc de code ne sera plus executé automatiquement lorsqu'on réalise un knit du document Rmd. Il sera néanmoins toujours possible de l'executer manuellement en cliquant sur sa petite flèche verte. 
+
+```{r,eval=FALSE}
+library(curl)
+### Téléchargement du fichier INSEE
+myurl="https://www.insee.fr/fr/statistiques/fichier/5542867/RP2018_LOGEMTZA_csv.zip"
+mydestfile = "tmp/menag2018.zip"
+curl_download(url=myurl, destfile=mydestfile)
+## Decompression du fichier INSEE
+unzip(zipfile = "tmp/menag2018.zip",
+      exdir = "tmp")
+## Examen du contenu
+list.files("tmp")
+```
+
+Nous constatons que le document zippé contenait en fait deux fichiers différents
+
+1. **Le fichier de données individuelles FD_LOGEMTZA_2018.csv** : qui pèse au bas mot 522.3 Mo (1 Giga) et dont nous verrons par la suite qu'il comporte 4.3 millions de lignes et 88 colonnes. 
+
+2. **Le fichier de métadonnées varmod_LOGEMT_2017.csv** : qui ne pèse que 4.6 Mo et comprend la description précise du label de chacune des modalités de variables. 
+
+
+### Etape 2 : Transformation des données au format R
+
+L'importation d'un tableau aussi gros (2.8 millions de lignes et 69 colonnes) donne l'occasion de faire quelques tests de vitesses sur les différents packages capables de lire des fichiers .csv.
+
+Nous allons pour cela utiliser la fonction `Sys.time()`qui permet de repérer l'heure au début et à la fin d'une action. Les résultats dépendront évidemment de la vitesse de l'ordinateur. Il s'agit ici d'un PC récent de puissance moyenne. 
+
+
+#### Chargement avec la fonction read.csv 
+
+- Avec la fonction`read.csv` ui fait partie du **R-base** , le temps de chargement est de 30  secondes. Le tableau résultant est de classe *data.frame* puisque nous avons utilisé une fonction native de R-base
+
+```{r, eval = FALSE}
+t1<-Sys.time()
+tab<-read.csv("tmp/FD_LOGEMTZA_2018.csv", sep = ";", header =T)
+t2<-Sys.time()
+paste ("chargement effectué en",t2-t1,"secondes")
+dim(tab)
+class(tab)
+```
+
+#### Chargement avec la fonction read_csv2
+
+- avec la fonction `read_csv2` du package **readr**, le chargement est effectué en 20 secondes sur le même ordinateur. Le tableau résultant garde la classe  *data.frame* mais est aussi un *tibble* puisque le package readr fait partie de l'écosystème tibble/tidyverse. Le temps de chrgement est donc divisé par deux.
+
+```{r, eval = FALSE}
+library(readr)
+t1<-Sys.time()
+tab<-read_csv2("tmp/FD_LOGEMTZA_2018.csv")
+t2<-Sys.time()
+paste ("chargement effectué en",t2-t1, "secondes")
+dim(tab)
+class(tab)
+```
+
+
+#### Chargement avec la fonction fread
+
+- avec la fonction `fread` du package **data.table**, le chargement est effectué en 6 secondes sur le même ordinateur.Le tableau résultant conserve la classe *data.frame* mais possède aussi la classe  *data.table* puisque la fonction fread est issue de ce package. Le temps est divisé par cinq comparativement à la fonction de R-base.
+
+```{r, eval = FALSE}
+library(data.table)
+t1<-Sys.time()
+tab<-fread("tmp/FD_LOGEMTZA_2018.csv")
+t2<-Sys.time()
+paste ("chargement effectué en",t2-t1, "secondes")
+dim(tab)
+class(tab)
+```
+
+On voit donc que le temps de chargement peut différer fortement selon le choix des packages. Il en va ensuite de même pour les traitements d'agrégation des données qui seront plus ou moins rapides selon que l'on utilise les fonctions de R-base applicables à un data.frame, celles du package tidyverse applicables à un tibble ou enfin celles du package data.table applicables à un data.table.  
+
+
+
+
+
+### Etape 3 : Sélection des données utiles et sauvegarde au format .Rdata
+
+Nos différentes tableaux peuvent être enregistés au format interne de .R ce qui réduira considérablement leur taille par rapport au fichier texte au format csv qui pèse 522 Mo. Nous allons également limiter la taille du document en ne conservant que les données qui nous intéressent, en l'occurence celles des départements de Paris et Petite Couronne. 
+
+Comme ces données bvont nous servir durant tout le projet, elles seront stockées dans le dossier **data** situé à l'intérieur du projet et non pas dans le dossier **tmp** qui sera détruit si l'on n'en a plus besoin pour libérer de la place.
+
+- **N.B. On ramène l'objet à la classe d'objet unique data.frame pour éviter des conflits possibles entre package. On pourra toujours le retransformer ensuite en data.table ou en tibble.** 
+
+
+
+```{r, eval = FALSE}
+## Chargement avec fread (+ rapide)
+tab<-fread("tmp/FD_LOGEMTZA_2018.csv")
+
+## Suppression de la classe data.table
+tab<-as.data.frame(tab)
+## Selection des données relatives au Val de Marne
+sel<-tab %>% mutate(DEPT=substr(COMMUNE,1,2)) %>% filter(DEPT %in% c("75","92","93","94"))
+## Vérification des dimensions du tableau
+dim(sel)
+## Sauvegarde au format RDS
+saveRDS(object = sel,
+        file = "data/menag2018.RDS")
+```
+
+
+On peut effectuer de façon facultative une sauvegarde au format .csv ce qui évitera des problème d'ouverture du fichier .Rdata pour les personnes ayant des versions anciennes de R. Mais du coup cela engendrera un fichier très volumineux (200 Mo). 
+
+
+
+```{r, eval = FALSE}
+## Sauvegarde au format CSV (facultatif)
+write.table(x=sel, 
+            file = "data/indiv2017.csv",
+            sep=";",
+            dec = ".",
+            fileEncoding = "UTF-8")
+```
+
+#### Etape 4 : Chargement et sauvegarde des méta-données
+
+Il ne faut surtout pas oublier le fichier des métadonnées qui va permettre de recoder facilement tous les facteurs et de décoder les chiffres correspondant aux classes. On va donc le transformer au format R puis l'enregistrer également dans le dossier data. 
+
+
+```{r, eval = FALSE}
+# Lecture du fichier de métadonnées
+meta<-fread("tmp/varmod_LOGEMT_2018.csv")
+# Enregistrement dans le dossier data
+saveRDS(object = meta,
+        file = "data/menag2018_meta.RDS")
+```
+
+
+
+
+## Données géométriques
+
+Les contours des unités spatiales correspondant aux codes de l'INSEE sont produits par l'IGN et disponibles sur le site géoservice en accès libre :
+
+
+
+
+### Etape 1 : récupération du fonds IRIS au format shapefile
+
+On récupère le fichier des IRIS et on le décompresse : 
+ 
+https://geoservices.ign.fr/ressource/178706
+
+```{r, eval=FALSE}
+list.files("tmp/iris")
+```
+
+### Etape 2 : Importation et transformation au format sf
+
+La cartographie et plus généralement les opérations géométriques sur des données spatiales dans R peuvent facilement être effectuées avec le **package sf** (spatial features) qui crée des objets ubniques  rassemblant à la fois 
+
+- un tableau de données (l'équivalent du fichier .dbf)
+- une géométrie (l'équivalent du fichier .shp)
+- une projection (l'équivalent du fichier .prj)
+
+Lorsqu'on récupère des fonds de carte au format shapefile (.shp) ou dans d'autres formats standards comme GeoJson, la première tâche consiste donc à les convertir au formt sf afin de pouvoir les utiliser facilement dans R. L'importation se fait à l'aide de l'instruction `st_read` en indiquant juste le nom du fichier .shp à charger. Les autres fichiers (.dbf ou .proj) seront lus également et intégrés dans l'objet qui hérite de la double classe *data.frame* et *sf*
+ 
+ 
+
+```{r, eval=FALSE }
+library(sf)
+map <- st_read("tmp/iris/IRIS_GE.shp")
+dim(map)
+class(map)
+head(map,2)
+```
+
+
+### Etape 3 : Extraction des IRIS de la zone d'étude
+
+
+Le fichier comporte près de 50 000 unités spatiales qui correspondent soit à des communes suffisamment grandes pour être découpées en IRIS, soit à des communes non découpées. On reconnaît ces dernières au fait que leur code IRIS se termine par '00000'.
+
+Supposons qu'on veuille extraire le fonds de carte du Val de Marne. On va commencer par créer une variable DEPT en extrayant les dxeux premiers caractères du code communal, puis on va sélectionner le départements correspondant :
+
+```{r, eval=FALSE}
+map_iris<-map %>% mutate(DEPT = substr(INSEE_COM,1,2)) %>%
+             filter(DEPT %in% c("75","92","93","94"))
+dim(map_iris)
+class(map_iris)
+head(map_iris,2)
+```
+
+Le nouveau tableau ne comporte plus que 2752 unités spatiales et 8 colonnes au lieu de 7 puisqu' l'on a ajouté une colonne DEPT. 
+
+
+On sauvegarde le résultat dans notre dossier **data** au format interne de R :
+
+```{r, eval=FALSE}
+saveRDS(object = map_iris,
+        file = "data/map_iris.Rdata")
+```
+
+
+
+
+
+### Etape 4 : création d'un fonds de carte des communes
+
+Comme nous serons amenés à travailler à plusieurs échelles, nous produisons tout de suite un fonds de carte des communes en utilisant les fonctions d'agrégation du packages **sf** combinées avec celles de **dplyr**.
+
+```{r, eval=FALSE}
+map_com <- map_iris  %>% group_by(INSEE_COM) %>%
+                        summarise(NOM_COM = min(NOM_COM)) %>%
+                        st_as_sf()
+
+saveRDS(object = map_com,
+        file = "data/map_com.Rdata")
+```
+
+### Etape 5 : création d'un fonds de carte par département
+
+Enfin, on construit un fonds de carte des départements selon la même procédure :
+
+```{r, eval=FALSE}
+map_dep <- map_iris  %>%     mutate(DEPT = substr(INSEE_COM,1,2))%>%
+                        group_by(DEPT) %>%
+                        summarise() %>%
+                        st_as_sf()
+
+saveRDS(object = map_dep,
+        file = "data/map_dep.Rdata")
+```
+
+
+
+
+
+## Données sur le logement social
+
+
+Les données sur le logement social sont disponibles sur le site du ministère du développement durable :
+
+https://www.statistiques.developpement-durable.gouv.fr/le-parc-locatif-social-au-1er-janvier-2020-0
+
+Nous avions téléchargé en 2021 une version de la RPLS 2020 qui comportait des données précises de géolocalisation en latitude longitude mais ces informations semblent avoir disparu depuis. On reprend donc les fichiers complets
+
+
+On choisit l'année 2018 pour être le plus en phase possible avec le recensement (même si en pratique celui-ci porte sur 5 ans).
+
+Après téléchargement de l'année 2018, on récupère un dossier zippé avec des données par régions ou par département dans le cas de l'Ile de France.
+
+## Bilan et nettoyage
+
+
+Nous avons désormais un dossier **data** qui comporte :
+
+1. Le fichier des logements ordinaires en 2018 et ses métadonnées
+2. Les fonds de carte par iris, commune et département.
+3. Le fichier du RPLS pour l'année 2020 et sa documentation
+
+
+```{r}
+list.files("data")
+```
+
+On peut alors décider de détruire le dossier **tmp** qui contient des dossiers très volumineux et pas forcément indispensables.
+

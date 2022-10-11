@@ -1,0 +1,166 @@
+---
+title: "Analyse spatiale et territoriale du logement social"
+author: "Claude Grasland, Université de Paris Cité"
+subtitle: Formation Carthageo-Geoprisme 2022
+output:
+  beamer_presentation:
+    colortheme: beaver
+    fonttheme: structurebold
+    theme: Madrid
+  slidy_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(mapsf)
+library(data.table)
+```
+
+
+
+# Données RPLS
+
+
+## Source
+
+Le répertoire des logements locatifs des bailleurs sociaux (RPLS) a pour objectif de dresser l’état global du parc de logements locatifs de ces bailleurs sociaux au 1er janvier d’une année. Il est alimenté par les informations transmises par les bailleurs sociaux. La transmission des informations pour la mise à jour annuelle du répertoire des logements locatifs est obligatoire. Les données sont ensuite géolocalisées à l'adresse et mis à disposition des utilisateurs sur le [**site du ministère de la transition écologique**](https://www.statistiques.developpement-durable.gouv.fr/logement) 
+
+Les fichiers sont disponibles en général par régions mais livrés par départements dans le cas de l'Ile de France. Nous allons utilisé ici le fichier du 1er janvier 2020 accessible à l'adresse suivante
+
+https://www.statistiques.developpement-durable.gouv.fr/le-parc-locatif-social-au-1er-janvier-2020-0
+
+
+## Métadonnées
+
+Le fichier de données brutes au format .csv est accompagné d'un document excel précisant le code des variables et la façon dont elles ont été obtenues.
+
+```{r, echo=FALSE}
+knitr::include_graphics("figures/RPLS_meta.png",dpi = 200)
+```
+
+
+## Spatialisation
+
+Le fichier indique pour chaque logement sa localisation précise en terme d'adresse mais aussi d'étage dans un immeuble. A partir de ces données qualitatives, l'INSEE a procédé à un géocodage qui aboutit à la création de deux champs  :
+
+- coordonnées de latitude et longitude non projetées 
+- coordonnées de position en projection Lambert officielle
+
+Selon les analyses on peut utiliser l'une ou l'autre de ces coordonnées. Mais la meilleur solution consiste à **créer un fichier de type sf (spatial features)** en coordonnées WGS94 qu'on pourra ensuite reprojeter dans le système de son choix. 
+
+
+
+## Stratégie
+
+Avant toute exploitation du fichier il est fortement recommandé d'analyser en détail les métadonnées et de définir une stratégie d'analyse. 
+
+1. **choisir une première zone d'étude** de petite taille et localisée de préférence dans un espace que l'on connaît bien.
+2. **choisir des variables intéressantes** dont l'on connaît bien la signification et dont on a analysé en détail les métadonnées 
+3. **vérifier la qualité des données** en regardant notamment le nombre de valeurs manquantes, le dégré de précision, etc. 
+4. **sélectionner des données auxiliaires** issues d'autres sources que l'on souhaite croiser avec celles du RPLS en s'assurant de leur compatibilité (espace, temps, définition, ...) 
+5. **Ajouter les coordonnées spatiales** et stocker le résultat dans un fichier de type sf comportant les indications de projection.
+
+
+## Importation du fichier 
+
+
+
+On importe le fichier enregistré au format RDS et on vérifie sa taille avec dim() et sont ype avec class()
+
+```{r}
+don <- readRDS("data/RPLS2020.RDS")
+dim(don)
+
+```
+
+Le tableau comporte 844302 lignes (chacune correspondant à un logement) et 73 variables (décrites dans les métadonnées).
+
+## Choix de la zone d'étude
+
+On décide de limiter notre analyse dans un premier temps à quatre communes voisines présentant des profils différents. On peut tester leur profil de respect de la loi SRU en 2019 sur l'application suivante : https://www.ecologie.gouv.fr/sru/
+
+- **Bonneuil-sur-Marne (94011)**: large excédent ( > 25% , pas de pénalité)
+- **Chennevières-sur-Marne (94019) ** : léger déficit (22.76%, 58 k€)
+- **Sucy-en-Brie: déficit (94071)** : (19.93% , 150k€ ) 
+- **Ormesson-sur Marne (94055)** : très fort déficit (2.29%, 665 k€)
+
+On relève leur code INSEE afin de pouvoir faciliter l'extraction des données.
+
+## Choix des variables 
+
+On va se limiter ici à un très petit nombre de variables 
+
+### variables de localisation
+- result_id : code de l'adresse
+- result_label : label de l'adresse
+- LIBCOM : nom de la commune
+- DEPCOM : code de la commune
+- latitude : coordonnées latitude
+- longitude: coordonnée longitude
+- X : coordonnée projetée (EPSG = 2154)
+- Y : coordonnée projetée (EPSG = 2154)
+
+### variables thématiques
+- CONSTRUCT : année de construction
+- SURFHAB : surface habitable en m2
+- NBPIECE : nombre de pièces
+
+
+
+
+
+## Extraction du fichier
+
+On applique la double sélection des individus et des variables en nous servant des fonctions `filter()`et `select()`du package dplyr.on aboutit ici à un fichier de 8139 lignes et 11 variables. 
+
+```{r}
+sel <- don %>% 
+  filter(DEPCOM %in% c("94011","94019",
+                       "94071","94055")) %>%
+  select(result_id, result_label,
+         DEPCOM, LIBCOM, 
+        latitude,longitude,X,Y,
+        CONSTRUCT,SURFHAB,NBPIECE) 
+
+dim(sel)
+```
+## Recodage et typage
+
+Certaines variables doivent être recodées ou changées de type afin de faciliter leur exploitation ultérieure par R.
+
+```{r}
+sel$DEPCOM <- as.character(sel$DEPCOM)
+sel$LIBCOM <- as.factor(sel$LIBCOM)
+sel$PLG_IRIS <- paste(sel$DEPCOM,sel$PLG_IRIS, sep = "")
+sel$SURFHAB <- as.numeric(sel$SURFHAB)
+
+```
+
+
+## Résumé rapide
+
+On analyse rapidement les variables thématiques choisies
+
+```{r, echo=FALSE}
+kable(summary(sel[,c(9,10,11)]),)
+```
+
+## Sauvegarde du fichier
+
+On sauvegarde le fichier obtenu au format .RDS afin de garder le formatage des variables : 
+
+```{r}
+saveRDS(sel,"data/sel_logt.RDS")
+```
+
+
+
+
+
+
+

@@ -1,0 +1,250 @@
+---
+title: "Analyse spatiale et territoriale du logement social"
+author: "Claude Grasland, Université de Paris (Diderot)"
+subtitle: Formation Carthageo-Geoprisme 2022 
+output:
+  beamer_presentation:
+    colortheme: beaver
+    fonttheme: structurebold
+    theme: Madrid
+  slidy_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(xtable)
+library(survey)
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(questionr)
+library(sf)
+library(cartography)
+```
+
+
+# Données RP 2018
+
+
+## Définir le sujet
+
+Soit le sujet : *Logements sociaux et qualification des chefs de ménages *
+
+### Définir les "logements sociaux" 
+Logements HLM ? Logements SRU ?
+
+### Définir la notion de "qualification" ?
+Le diplôme le plus élevé ? le nombre d'années d'étude ? 
+
+### Définir la date
+Année 2018 uniquement ? Résultats du RP 2018 (2016-2020) ? 
+
+
+
+
+## Formuler des questions ou des hypothèses
+
+Qu'elles soient justes ou fausses, les hypothèses permettent de cadrer l'analyse.
+
+### Diplôme et logement social
+Les logements sociaux sont réservés aux ménages les moins diplômés
+
+### Âge et logement social
+Les logements sociaux sont réservés aux jeunes ménages 
+
+### Logement social et territoire
+Les logements sociaux sont concentrés dans certains quartiers
+
+###  Logement social, âge et diplômes
+Les personnes diplômés quittent les logements sociaux dès que leurs revenus progressent
+
+
+## Organiser le travail 
+
+Sutout dans le cadre d'un groupe !
+
+### Ne collecter que les données utiles pour répondre aux questions posées
+Afin de ne pas être tenté de partir dans toutes les directions
+
+### Archiver soigneusement les programmes et les résultats
+Afin de pouvoir reproduire ultérieurement les analyses sur une autre période, un autre territoire
+
+### Ne pas attendre d'avoir accumulé tous les résultats pour les commenter
+Car l'analyse peut suggérer des erreurs ou ouvrir de nouvelles pistes.
+
+### Partir des questions et non pas des outils
+Faute de quoi on va trouver des réponses (42 ...) sans savoir quelle est la question. 
+
+
+
+
+## Charger les données statistiques
+
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_ind<-readRDS("data/menag2018.RDS")
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+head(tab_ind[,1:5],2)
+```
+
+
+## Préparation de l'analyse 
+
+
+- Soit la relation entre logement en HLM (Y) et Diplôme le plus élevé du chef de ménage (X). Il s'agit de deux variables **catégorielles** (= qualitatives) que l'on va typiquement mettre en relation à l'aide d'un **tableau de contingence** et d'un **test du chi-2**. L'analyse statistique est simple sous R mais il faut tenir compte de trois difficultés
+
+- Le choix de la **population de référence** est important. Ici on va sélectionner les ménages dont la personne de référence est âgée de 25-39 ans
+
+- la sélection ou le regroupement  des **diplômes** est également important car cela va influer sur les résultats du test.
+
+- la **pondération des individus** doit également être prise en compte puisque le recensement est basé sur un sondage
+
+
+## Sélection des individus et des variables
+
+
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+#table(tab_ind$AGEMEN8)
+tab_sel<- tab_ind %>% 
+  filter(AGEMEN8 == "25") %>%
+  select(DIPLM,HLML, IPONDL) 
+
+
+```
+
+### résultats
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab_sel,4))
+```
+
+## Recodage des modalités
+
+On cherche le code des modalités CS1 ezt HLML dans le fichier des métadonnées
+
+```{r}
+meta<-readRDS("data/menag2018_meta.RDS")
+metasel <- meta %>% filter(COD_VAR %in% c("DIPLM", "HLML"))
+kable(metasel[,c(1,3,4)])
+```
+
+
+
+
+## Recodage des modalités
+
+On recode les modalités des deux variables en regroupant certaines CSP
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_sel$HLML<-as.factor(tab_sel$HLML)
+levels(tab_sel$HLML)<-c("HLM-O","HLM-N",NA)
+tab_sel$DIPLM<-as.factor(tab_sel$DIPLM)
+levels(tab_sel$DIPLM) <- c("< BAC","< BAC","< BAC","< BAC","< BAC","< BAC",
+                         "BAC","BAC",
+                         "BAC+123","BAC+123","> BAC+3","> BAC+3",NA)
+table(tab_sel$DIPLM)
+                        
+```
+
+### résultats
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab_sel,3))
+```
+
+## Création du tableau de contingence non pondéré (FAUX)
+
+La solution la plus simple semble être l'instruction *table()*
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_cont<-table(tab_sel$HLML,tab_sel$DIPLM)
+```
+
+### résultats
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(addmargins(tab_cont))
+```
+
+
+## Création du tableau de contingence pondéré (JUSTE)
+
+On pondère avec *wtd.table()* du package *questionr*.
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+library(questionr)
+tab_cont_wtd<-wtd.table(tab_sel$HLML,tab_sel$DIPLM,
+                        weights = tab_sel$IPONDL)
+```
+
+### résultats
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(round(addmargins(tab_cont_wtd),0))
+```
+
+
+## Comparaison des niveaux de dépendance automobile
+
+
+- Tableau non pondéré ... légèrement faux !
+
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+tab_pct<-cprop(tab_cont)
+knitr::kable(tab_pct,digits=1)
+```
+
+- Tableau pondéré ... juste !
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+tab_pct_wtd<-cprop(tab_cont_wtd)
+knitr::kable(tab_pct_wtd,digits=1)
+```
+
+
+## Visualisation du tableau de contingence
+
+On choisit l'orientation du tableau et on l'affiche avec plot()
+
+```{r, cache.comments=TRUE,comment=F,message=F, comment = F,error=FALSE,echo=T,fig.height=3,fig.width=6 }
+mytable<-wtd.table(tab_sel$DIPLM,tab_sel$HLML,weights = tab_sel$IPONDL)
+plot(mytable)
+```
+
+
+## Visualisation améliorée du tableau de contingence
+
+Tant qu'à faire, on améliore la figure avec des paramètres supplémentaires : 
+
+```{r, cache.comments=TRUE,comment=F,message=F, comment = F,error=FALSE,echo=F, fig.height=4,fig.width=6}
+plot(mytable, main = "Logements HLM & Diplôme CM", sub = "Source : INSEE - RP 2018", col=c("lightyellow","lightgreen"))
+```
+
+## Test du Chi-deux
+
+Ce test se réalise facilement sur le tableau de contingence avec l'instruction *chisq.test()* :
+
+```{r, cache.comments=TRUE,comment=F,message=F, comment = "",error=FALSE,echo=T}
+mytest<-chisq.test(mytable)
+mytest
+```
+
+## Visualisation des résidus
+
+Lorsque la relation est significative, on visualise les cases les plus exceptionnelles avec *mosaicplot( ..., shade = T)*
+```{r, cache.comments=TRUE,comment=F,message=F, comment = F,error=FALSE,echo=F, fig.height=4,fig.width=6}
+mosaicplot(mytable, main =  "Logements HLM & diplôme CM", sub = "Source : INSEE - RP 2018", shade =T)
+```
+
+## Conclusion
+
+
+
+
+
+
+

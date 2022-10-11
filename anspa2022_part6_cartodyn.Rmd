@@ -1,0 +1,154 @@
+---
+title: "Analyse spatiale et territoriale du logement social"
+author: "Claude Grasland, Université de Paris Cité"
+subtitle: "Formation Carthageo-Geoprisme 2022"
+output:
+  ioslides_presentation: default
+  slidy_presentation: default
+  beamer_presentation:
+    colortheme: beaver
+    fonttheme: structurebold
+    theme: Madrid
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(mapsf)
+library(mapview)
+library(RColorBrewer)
+
+```
+
+
+
+# Cartographie dynamique
+
+
+## Statique ou dynamique ?
+
+- **Cartographie statique**
+  - production d'**images fixes** de qualité
+  - respect strict des règles de la **sémiologie graphique** 
+  - choix libre d'une **projection adaptée** (e.g. EPSG 2154) 
+  - production de **documents imprimés** à finalité normative ou scientifiques
+  
+
+- **Cartographie dynamique**
+  - production d'**interfaces** consultables dans un **navigateur**. 
+  - modification possible de l'**échelle** et de l'**arrière-plan** 
+  - **projection imposée** par les "tuiles" (*EPSG 4326*)
+  - production de **documents interactifs** à finalité citoyenne ou exploratoire
+
+
+## Packages R de cartographie dynamique
+
+- **leaflet :  la référence**
+  - Une **librairie javascript** non liée à un langage (R, Python, html, ...)
+  - Disponible dans R sous forme de package
+  - Développement constant
+
+- **ggmap :  l'empire contre attaque**
+  - des outils cartogaphiques utilisant la syntaxe de tidyverse
+  - impose désormais un lien avec Google
+
+- **tmap :  une solution hybride**
+  - permet de passer facilement du mode statique au mode dynamique
+
+- **mapview : l'équivalent de mapsf**
+  - mis au point par des développeurs allemands
+  - facilite l'usage de leaflet
+  - en progrès constant (mais instable) 
+
+## Préparation des données
+
+On charge les fichiers au format sf et on les transforme en projection WGS94 (EPSG=4326), condition indispensable pour ajouter des "tuiles" dynamiques lors des zoom.  
+
+```{r}
+map_com <- readRDS("data/sel_map_com.RDS") %>%
+              st_transform(4326)
+map_iris <- readRDS("data/sel_map_iris.RDS") %>%
+              st_transform(4326)
+map_logt <- readRDS("data/sel_map_logt.RDS") %>%
+              st_transform(4326)
+```
+
+
+## Carte par défaut
+
+Mapview produit par défaut une carte dynamique du fichier sf. 
+
+```{r, eval=FALSE, echo=TRUE}
+mapview(map_logt)
+```
+
+```{r, eval=TRUE, echo=FALSE}
+knitr::include_graphics("figures/mw001.png", dpi=250)
+```
+
+## Carte par défaut
+
+On peut zoomer sur la carte, changer les tuiles et faire apparaître des informations sur un point
+
+
+```{r, eval=TRUE, echo=FALSE}
+knitr::include_graphics("figures/mw002.png", dpi=250)
+```
+
+## Superposition de couches
+
+On peut créer des couches et les aditionner avec '+' :
+
+```{r, eval=FALSE, echo=TRUE}
+m1 = mapview(map_com, zcol = "NOM_COM") 
+m2 = mapview(map_logt)
+m1+m2
+```
+
+```{r, eval=TRUE, echo=FALSE}
+knitr::include_graphics("figures/mw003.png", dpi=300)
+```
+
+
+## Exemple complet
+
+On va essayer de reproduire la carte statique faite avec mapsf
+
+```{r, eval=FALSE, echo=TRUE}
+# Carte des communes
+map1 <- mapview(map_com, lwd=1, legend= FALSE,
+                alpha.regions = 0.1)
+# Carte des iris
+map2 <- mapview(map_iris,lwd = 0.3, label= "NOM_IRIS",
+                legend= FALSE, alpha.regions = 0)
+# Carte des logements
+map3 <- mapview(map_logt,
+                zcol = "datemoy",
+                at = c(1900,1960, 1970,1980,
+                       1990,2000,2010, 2021),
+                col.regions = brewer.pal(8, "Spectral"),
+                cex= "nblog")
+map1+map2+map3
+```
+
+## Exemple complet
+
+```{r, eval=TRUE, echo=FALSE}
+knitr::include_graphics("figures/mw005.png", dpi=200)
+```
+
+
+
+## Exemple complet
+
+```{r, eval=TRUE, echo=FALSE}
+knitr::include_graphics("figures/mw004.png", dpi=200)
+```
+
+
+
+
+

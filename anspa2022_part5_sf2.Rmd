@@ -1,0 +1,255 @@
+---
+title: "Analyse spatiale et territoriale du logement social"
+author: "Claude Grasland, Université de Paris Cité"
+subtitle: Formation Carthageo-Geoprisme 2022
+output:
+  beamer_presentation:
+    colortheme: beaver
+    fonttheme: structurebold
+    theme: Madrid
+  slidy_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(sf)
+library(mapsf)
+```
+
+
+
+# Localisation spatiale
+
+
+## Retour sur sf
+
+Nous revenons sur le **package sf (spatial features)** que nous avons déjà rencontré au moment de la création de cartes thématiques par IRIS ou communes à l'aide du package `mapsf`. 
+
+Ici le package sf va être utilisé pour cartographier non pas des zones mais des localisations ponctuelles. Il pourra être à nouveau couplé avec le logiciel de **cartogaphie statique** comme mapsf , afin par exemple de placer les localisations des logements sociaux au dessus du fonds de carte des IRIS ou communes.
+
+Mais il pourra aussi servir de base à des **cartographies dynamiques** permettant de placer les points sur des réseaux de rue et plus généralement sur des "tuiles" cartographiques permettant d'effectur des zoom. On utilisera à cet effet d'autres packages comme `leaflet` ou sa version simplifiée `mapview`. 
+
+
+## Données ponctuelles
+
+Nous reprenons le fichier de localisation établi au chapitre précédent et nous ne conservons que 6 variables: 
+
+```{r}
+logt <- readRDS("data/sel_logt.RDS") %>%
+        select(adresse=result_id,
+               X,Y,
+               date = CONSTRUCT)
+
+```
+
+```{r, echo=FALSE}
+kable(head(logt,3))
+```
+
+
+## Données IRIS
+
+Nous chargeons par ailleurs le fichier des IRIS en ne gardant que la zone d'étude : 
+
+```{r}
+map_iris <- readRDS("data/map_iris.RDS") %>%
+         filter(INSEE_COM %in% c("94011","94019",
+                       "94071","94055"))
+  
+```
+
+```{r, echo=FALSE}
+kable(head(st_drop_geometry(map_iris),3))
+```
+
+
+## Agrégation par commune
+
+Rappel : on peut agréger les géométries d'un fonds sf. Ici on va créer le fonds de carte des communes. 
+
+```{r}
+map_com <- map_iris %>% group_by(INSEE_COM,NOM_COM) %>%
+                summarise() %>%
+                st_cast("MULTIPOLYGON")
+  
+```
+
+## Vérification de la projection
+
+Nous savons que les coordonnées X,Y du fichier logement sont projetées en EPS 2154. Mais quelle est la projection de notre fonds IRIS ? S'agit-il de la même ?
+
+```{r}
+st_crs(map_iris)$proj4string
+st_crs(2154)$proj4string
+```
+A priori il s'agit bien de la même  de sorte que les coordonnées X,Y devraient bien se superposer sur le fonds IRIS
+
+
+## Test de superposition
+
+### Programme
+```{r, eval=FALSE, echo=TRUE}
+par(mar=c(0,0,0,0))
+#trace les iris
+plot(map_iris$geometry, 
+     col="lightyellow", border="gray70",
+     lwd=0.2)
+# trace les communes     
+plot(map_com$geometry, 
+     col=NA, lwd=1, add=T)
+# ajoute les points
+points(x=logt$X,
+       y=logt$Y, 
+       cex=0.2,
+       col="red",
+       pch = 16)
+```
+
+
+## Test de superposition
+
+### Résultat
+```{r, eval=TRUE, echo=FALSE, fig.width=4, fig.height=3}
+par(mar=c(0,0,0,0))
+#trace les iris
+plot(map_iris$geometry, 
+     col="lightyellow", border="gray70",
+     lwd=0.2)
+# trace les communes     
+plot(map_com$geometry, 
+     col=NA, lwd=1, add=T)
+# ajoute les points
+points(x=logt$X,
+       y=logt$Y, 
+       cex=0.2,
+       col="red",
+       pch = 16)
+```
+
+
+## fichier des adresses
+
+Nous allons maintenant établir un fichier de localisation des adresses en nous servant de l'identifiant unique fourni par l'INSEE.
+
+```{r}
+adr <- logt %>% select(adresse,X,Y) %>% 
+               filter(duplicated(adresse) == F) %>%
+               filter(is.na(X) ==F,is.na(Y)==F)
+
+
+```
+
+On constate qu'il n'y a que 652 adresses différentes alors que notre fichier fait état de 8139 logements. Une adresse regroupe donc en moyenne plus de 10 logements (habitat collectif).
+
+## Transformation en fichier sf
+
+La transformation de notre fichier initial au format sf est facile à réaliser avec la fonction `st_as_sf()`  du package sf. Mais il faut prendre garde de bien préciser le système de projection si l'on veut pouvoir ensuite l'utiliser.
+
+```{r}
+map_adr <- st_as_sf(adr, coords = c("X","Y"))
+st_crs(map_adr)<- 2154
+str(map_adr)
+
+```
+
+
+## Agrégation des logements
+
+Notre nouveau fichier sf permet désormais d'effectuer des jointures avec le fichier des logements sociaux. A titre d'exemple on peut désormais compter le nombre de logements par adresse et leur ancienneté moyenne.
+
+### programme
+```{r, echo=TRUE, eval=FALSE}
+logt_by_adr <- logt %>% 
+               group_by(adresse) %>%
+               summarise(nblog = n(),
+                         datemoy = mean(date))
+```
+
+
+
+## Agrégation des logements
+
+
+### résultat
+```{r, echo=FALSE, eval=TRUE}
+logt_by_adr <- logt %>% 
+               group_by(adresse) %>%
+               summarise(nblog = n(),
+                         datemoy = mean(date))
+kable(head(logt_by_adr,10))
+
+
+```
+
+## Jointure 
+
+On peut désormais effectuer la jointure entre les données agrégées par adresse et le fichier sf de localisation des adresses :
+
+```{r}
+map_logt <- inner_join(logt_by_adr,map_adr) %>% st_as_sf()
+
+```
+
+
+## Cartographie avec mapsf
+
+On peut désormais utiliser les méthodes de cartographie déjà vues avec mapsf :
+
+### programme
+```{r eval=FALSE, echo=TRUE}
+mf_theme("agolalight")
+mybreaks = c(1900, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020)
+mypal=brewer.pal(n = 8,name = "Spectral")
+mf_map(map_iris, type = "base",  
+       col = "gray80",border="white", lwd=0.3)
+mf_map(map_com, type = "base", 
+       col = NA,border="black",lwd=1,add = TRUE)
+mf_prop_choro( x = map_logt,  var = c("nblog", "datemoy"), 
+  inches = 0.08, col_na = "grey", pal=mypal,
+  breaks = mybreaks, nbreaks = 4, lwd = 0.1,
+  leg_pos = c("right", "left"),leg_val_rnd = c(0,0),
+  leg_title = c("nb. logements", "ancienneté"),
+  add = TRUE)
+mf_layout(title = "Les logements sociaux en 2020",
+        frame = TRUE, credits = "Sources : IGN et RPLS")
+```
+
+
+## Cartographie avec mapsf
+
+
+### résultat
+```{r eval=TRUE,  echo=FALSE, fig.height = 6}
+mf_theme("agolalight")
+mybreaks = c(1900, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020)
+library(RColorBrewer)
+mypal=brewer.pal(n = 8,name = "Spectral")
+mf_map(map_iris, type = "base",  
+       col = "gray80",border="white", lwd=0.3)
+mf_map(map_com, type = "base", 
+       col = NA,border="black",lwd=1,add = TRUE)
+mf_prop_choro( x = map_logt,  var = c("nblog", "datemoy"), 
+  inches = 0.08, col_na = "grey", pal=mypal,
+  breaks = mybreaks, nbreaks = 4, lwd = 0.1,
+  leg_pos = c("right", "left"),leg_val_rnd = c(0,0),
+  leg_title = c("nb. logements", "ancienneté"),
+  add = TRUE)
+mf_layout(title = "Les logements sociaux en 2020",
+        frame = TRUE, credits = "Sources : IGN et RPLS")
+```
+
+## Sauvegarde des fichiers carographiques
+
+On sauvegarde nos différents fichiers cartographiques au format sf relatifs à la zone d'étude.
+
+
+```{r}
+saveRDS(map_com,"data/sel_map_com.RDS")
+saveRDS(map_iris,"data/sel_map_iris.RDS")
+saveRDS(map_logt,"data/sel_map_logt.RDS")
+```
+

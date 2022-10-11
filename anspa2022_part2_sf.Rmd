@@ -1,0 +1,293 @@
+---
+title: "Analyse spatiale et territoriale du logement social"
+author: "Claude Grasland, Université de Paris (Diderot)"
+subtitle: Formation Carthageo-Geoprisme 2022 
+output:
+  beamer_presentation:
+    colortheme: beaver
+    fonttheme: structurebold
+    theme: Madrid
+  slidy_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(xtable)
+library(survey)
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(questionr)
+library(sf)
+library(cartography)
+```
+
+
+
+# Localisation territoriale
+
+
+##  Le format sf (spatial features)
+
+La cartographie et plus généralement les opérations géométriques sur des données spatiales dans R peuvent facilement être effectuées avec le **package sf** (spatial features) qui crée des objets uniques  rassemblant à la fois 
+
+- un tableau de données (l'équivalent du fichier .dbf)
+- une géométrie (l'équivalent du fichier .shp)
+- une projection (l'équivalent du fichier .prj)
+
+Lorsqu'on récupère des fonds de carte au format shapefile (.shp) ou dans d'autres formats standards comme GeoJson, la première tâche consiste donc à les convertir au formt sf afin de pouvoir les utiliser facilement dans R. L'importation se fait à l'aide de l'instruction `st_read` en indiquant juste le nom du fichier .shp à charger. Les autres fichiers (.dbf ou .proj) seront lus également et intégrés dans l'objet qui hérite de la double classe *data.frame* et *sf*.
+
+##  Etapes de préparation des données
+
+Dans notre exemple, nous allons suivre les étapes suivantes :
+
+1. Préparer les données statistiques par IRIS dans un *data.frame*
+2. Charger un fonds de carte par IRIS au format *sf*
+3. Effectuer une jointure entre les deux fichiers par le code IRIS
+4. Sauvegarder le résultat
+5. Agréger les données statistiques et géométriques par commune
+6. Sauvegarder le résultat.
+
+
+
+
+
+
+
+## Préparer les données statistiques
+
+On importe le fichier des individus :
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_ind<-readRDS("data/menag2018.RDS")
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+head(tab_ind[,1:5],3)
+```
+
+
+##  Agréger les données 
+
+On commence par créer un *tableau long* croisant les deux variables et leur effectif pondéré : 
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_long<- tab_ind %>%
+           filter(HLML != "Y")%>%
+           group_by(IRIS,HLML)%>%
+           summarise(NB=sum(IPONDL))
+
+
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab_long,5),digits=2)
+```
+
+##  Pivoter le tableau
+
+Puis on fait "pivoter" le tableau pour l'obtenir en format large :
+
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab_large <- tab_long %>% pivot_wider(id_cols = IRIS, 
+                                      names_from = HLML,
+                                      names_prefix = "HLM_",
+                                      values_from = NB,
+                                      values_fill = 0)
+```
+
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab_large,5),digits=2)
+```
+
+## Ajouter de nouvelles variables
+
+On ajoute de nouvelles variables telles que le nombre total de ménage et le % de ménages en HLM : 
+
+
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+tab<- tab_large %>% mutate(TOT = HLM_1+HLM_2,
+                           HLM_pct = 100*HLM_1/TOT)
+```
+
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(tab,5),digits=2)
+```
+
+## Examiner la distribution statistique 
+
+On examine l'histogramme donnant distribution statistique du % de ménages ordinaires résidant en HLM par IRIS.
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+p <- ggplot(tab) + aes (x = HLM_pct) +
+                   geom_histogram(breaks = c(0,10,20,30,40,50,
+                                             60,70,80,90, 100)) +
+                   scale_x_continuous("% de ménages en HLM") +
+                   scale_y_continuous("Nombre d'IRIS") +
+                   ggtitle(label = "Distribution des logements sociaux dans Paris & PC",
+                           subtitle = "Source : INSEE, RP 2018")
+                            
+
+```
+
+## Examiner la distribution statistique 
+
+### résultat
+```{r, cache.comments=TRUE,warning=F,message=F, error=FALSE,echo=F, fig.width=6, fig.height = 4}
+p
+```
+
+
+
+
+
+
+
+## Charger les données géométriques
+
+On importe le fichier des iris du Val-de-Marne qui est au format sf en ne gardant que les colonnes utiles
+
+### programme
+```{r,comment=F,message=F, error=FALSE, comments = F, echo=T}
+map_iris <- readRDS("data/map_iris.RDS")
+map_iris<-map_iris[,c(4,5,1,2,7)]
+names(map_iris)<-c("IRIS","NOM_IRIS","COM","NOM_COM","geometry")
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+class(map_iris)
+knitr::kable(head(as.data.frame(map_iris)[,1:4],2))
+```
+
+
+## Visualisation du fonds iris avec sf
+
+On peut facilement produire une carte vierge des iris du Grand Paris en faisant un plot de la colonne *geometry* du fichier sf
+
+```{r,comment=F,message=F, error=FALSE, comments = F, echo=T, fig.width=5, fig.height=4}
+plot(map_iris$geometry,col="lightyellow")
+```
+
+
+
+
+
+
+## Jointure des données IRIS et du fonds de carte
+
+### programme 
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T,warning=F}
+map_iris_tab<-merge(map_iris,tab,
+                   by.x="IRIS",by.y="IRIS",
+                   all.x=T,all.y=F)
+```
+
+### résultat
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(map_iris_tab,3),digits=2)
+```
+
+## Sauvegarde du fichier par IRIS
+
+On sauvegarde notre fichier au format .RDS de R 
+
+
+```{r,comment=F,message=F, error=FALSE,echo=T,warning=F}
+saveRDS(map_iris_tab,"data/map_iris_hlm.RDS")
+```
+
+
+
+## Agrégation statistique + géométriques
+
+Grâce aux nouveaux packages de R (*dplyr* et *sf*) il est possible d'**agréger simultanément les statistiques et les géométries** après les avoir stockés dans un même objet de type "sf"
+
+Du coup, on peut gagner beaucoup de temps dans les traitements et les analyses cartographiques, en particulier si l'on veut tester différents niveaux d'agrégation.
+
+
+## Agrégation des IRIS en communes
+
+L'agrégation est très facile et elle concerne à la fois les variables (de stock) et les geometries
+
+### programme
+```{r,comment=F,message=F, error=FALSE,echo=T,warning=F}
+map_com_tab <- map_iris_tab %>% 
+  group_by(COM, NOM_COM) %>% 
+  summarise(HLM_1=sum(HLM_1,na.rm=T), 
+            HLM_2=sum(HLM_2,na.rm=T)) %>%
+  st_cast("MULTIPOLYGON")
+
+map_com_tab <- map_com_tab %>%  mutate(TOT = HLM_1+HLM_2,
+                                  HLM_pct = 100*HLM_1/TOT) 
+
+```
+
+
+
+## Agrégation des iris en communes
+
+### résultat statistique
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+knitr::kable(head(st_drop_geometry(map_com_tab),3),digits=2)
+```
+
+## Agrégation des iris en communes
+
+### résultat géométrique
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=F}
+plot(map_com_tab$geometry,col ="lightyellow")
+```
+
+## Examiner la distribution statistique 
+
+On examine l'histogramme donnant distribution statistique du % de ménages ordinaires résidant en HLM par Commune.
+
+### programme
+```{r, cache.comments=TRUE,comment=F,message=F, error=FALSE,echo=T}
+p <- ggplot(map_com_tab) + aes (x = HLM_pct) +
+                   geom_histogram(breaks = c(0,10,20,30,40,50,
+                                             60,70,80,90,100)) +
+                   scale_x_continuous("% de ménages en HLM") +
+                   scale_y_continuous("Nombre de communes") +
+                   ggtitle(label = "Distribution des logements sociaux dans Paris et PC",
+                           subtitle = "Source : INSEE, RP 2018")
+                            
+
+```
+
+## Examiner la distribution statistique 
+
+### résultat
+```{r, cache.comments=TRUE,warning=F,message=F, error=FALSE,echo=F, fig.width=6, fig.height = 4}
+p
+```
+
+
+
+
+
+
+
+
+## Sauvegarde du fichier par commune
+
+On sauvegarde notre fichier au format .RDS de R 
+
+
+```{r,comment=F,message=F, error=FALSE,echo=T,warning=F}
+saveRDS(map_com_tab,"data/map_com_hlm.RDS")
+```
+
+
+

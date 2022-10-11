@@ -1,0 +1,346 @@
+---
+title: "Préparation des données"
+author: "Claude Grasland"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Préparation des données 
+
+```{r}
+library(knitr)
+library(dplyr)
+library(data.table)
+library(readr)
+library(sf)
+library(ggplot2)
+```
+
+## Introduction
+
+
+
+
+
+## Données statistiques sur les logements ordinaires en 2018
+
+
+Nous partirons des fichiers détail de l'INSEE car, à la différence des tableaux prédéfinis,  ils permettent virtuellement toutes les formes de croisement d'indicateurs. Ils sont évidemment beaucoup plus volumineux, mais ce sera justement l'occasion pour les étudiants en data mining d'être confrontés à des problèmes d'optimisation et de big data. On trouve leur description détaillée sur le site de l'INSEE 
+
+https://www.insee.fr/fr/statistiques/5542867?sommaire=5395764#consulter
+
+
+Nous avons opté pour le fichier des individus localisés au canton-ou-ville qui présente une grande polyvalence d'usage puisqu'il permet de reconstituer des tableau agrégés ou l'unité de compte peut-être soit le ménage, soit l'individu selon le critère de pondération adopté.
+
+### Etape 1 : téléchargement des données et stockage temporaire 
+
+Nous allons télécharger ici le fichier des données pour la région Ile-de-France au format .csv et l'enregistrer dans un dossier spécial **tmp**  qui pourra ulétérieurement être détruit ou déplacé afin de libérer de la place
+
+N.B. Ce programme qui prend quelques minutes sera exécuté une seule fois. On ajoutera ensuite dans l'en-tête du chunk `eval=FALSE` ce qui veut dire que ce bloc de code ne sera plus executé automatiquement lorsqu'on réalise un knit du document Rmd. Il sera néanmoins toujours possible de l'executer manuellement en cliquant sur sa petite flèche verte. 
+
+```{r,eval=FALSE}
+library(curl)
+### Téléchargement du fichier INSEE
+myurl="https://www.insee.fr/fr/statistiques/fichier/5542867/RP2018_LOGEMTZA_csv.zip"
+mydestfile = "tmp/menag2018.zip"
+curl_download(url=myurl, destfile=mydestfile)
+## Decompression du fichier INSEE
+unzip(zipfile = "tmp/menag2018.zip",
+      exdir = "tmp")
+## Examen du contenu
+list.files("tmp")
+```
+
+Nous constatons que le document zippé contenait en fait deux fichiers différents
+
+1. **Le fichier de données individuelles FD_LOGEMTZA_2018.csv** : qui pèse au bas mot 522.3 Mo (1 Giga) et dont nous verrons par la suite qu'il comporte 4.3 millions de lignes et 88 colonnes. 
+
+2. **Le fichier de métadonnées varmod_LOGEMT_2017.csv** : qui ne pèse que 4.6 Mo et comprend la description précise du label de chacune des modalités de variables. 
+
+
+### Etape 2 : Transformation des données au format R
+
+L'importation d'un tableau aussi gros (2.8 millions de lignes et 69 colonnes) donne l'occasion de faire quelques tests de vitesses sur les différents packages capables de lire des fichiers .csv.
+
+Nous allons pour cela utiliser la fonction `Sys.time()`qui permet de repérer l'heure au début et à la fin d'une action. Les résultats dépendront évidemment de la vitesse de l'ordinateur. Il s'agit ici d'un PC récent de puissance moyenne. 
+
+
+#### Chargement avec la fonction read.csv 
+
+- Avec la fonction`read.csv` ui fait partie du **R-base** , le temps de chargement est de 30  secondes. Le tableau résultant est de classe *data.frame* puisque nous avons utilisé une fonction native de R-base
+
+```{r, eval = FALSE}
+t1<-Sys.time()
+tab<-read.csv("tmp/FD_LOGEMTZA_2018.csv", sep = ";", header =T)
+t2<-Sys.time()
+paste ("chargement effectué en",t2-t1,"secondes")
+dim(tab)
+class(tab)
+```
+
+#### Chargement avec la fonction read_csv2
+
+- avec la fonction `read_csv2` du package **readr**, le chargement est effectué en 20 secondes sur le même ordinateur. Le tableau résultant garde la classe  *data.frame* mais est aussi un *tibble* puisque le package readr fait partie de l'écosystème tibble/tidyverse. Le temps de chrgement est donc divisé par deux.
+
+```{r, eval = FALSE}
+library(readr)
+t1<-Sys.time()
+tab<-read_csv2("tmp/FD_LOGEMTZA_2018.csv")
+t2<-Sys.time()
+paste ("chargement effectué en",t2-t1, "secondes")
+dim(tab)
+class(tab)
+```
+
+
+#### Chargement avec la fonction fread
+
+- avec la fonction `fread` du package **data.table**, le chargement est effectué en 6 secondes sur le même ordinateur.Le tableau résultant conserve la classe *data.frame* mais possède aussi la classe  *data.table* puisque la fonction fread est issue de ce package. Le temps est divisé par cinq comparativement à la fonction de R-base.
+
+```{r, eval = FALSE}
+library(data.table)
+t1<-Sys.time()
+tab<-fread("tmp/FD_LOGEMTZA_2018.csv")
+t2<-Sys.time()
+paste ("chargement effectué en",t2-t1, "secondes")
+dim(tab)
+class(tab)
+```
+
+On voit donc que le temps de chargement peut différer fortement selon le choix des packages. Il en va ensuite de même pour les traitements d'agrégation des données qui seront plus ou moins rapides selon que l'on utilise les fonctions de R-base applicables à un data.frame, celles du package tidyverse applicables à un tibble ou enfin celles du package data.table applicables à un data.table.  
+
+
+
+
+
+### Etape 3 : Sélection des données utiles et sauvegarde au format .Rdata
+
+Nos différentes tableaux peuvent être enregistés au format interne de .R ce qui réduira considérablement leur taille par rapport au fichier texte au format csv qui pèse 522 Mo. Nous allons également limiter la taille du document en ne conservant que les données qui nous intéressent, en l'occurence celles des départements de Paris et Petite Couronne. 
+
+Comme ces données bvont nous servir durant tout le projet, elles seront stockées dans le dossier **data** situé à l'intérieur du projet et non pas dans le dossier **tmp** qui sera détruit si l'on n'en a plus besoin pour libérer de la place.
+
+- **N.B. On ramène l'objet à la classe d'objet unique data.frame pour éviter des conflits possibles entre package. On pourra toujours le retransformer ensuite en data.table ou en tibble.** 
+
+
+
+```{r, eval = FALSE}
+## Chargement avec fread (+ rapide)
+tab<-fread("tmp/FD_LOGEMTZA_2018.csv")
+
+## Suppression de la classe data.table
+tab<-as.data.frame(tab)
+## Selection des données relatives au Val de Marne
+sel<-tab %>% mutate(DEPT=substr(COMMUNE,1,2)) %>% filter(DEPT %in% c("75","92","93","94"))
+## Vérification des dimensions du tableau
+dim(sel)
+## Sauvegarde au format RDS
+saveRDS(object = sel,
+        file = "data/menag2018.RDS")
+```
+
+
+On peut effectuer de façon facultative une sauvegarde au format .csv ce qui évitera des problème d'ouverture du fichier .Rdata pour les personnes ayant des versions anciennes de R. Mais du coup cela engendrera un fichier très volumineux (200 Mo). 
+
+
+
+```{r, eval = FALSE}
+## Sauvegarde au format CSV (facultatif)
+write.table(x=sel, 
+            file = "data/indiv2017.csv",
+            sep=";",
+            dec = ".",
+            fileEncoding = "UTF-8")
+```
+
+#### Etape 4 : Chargement et sauvegarde des méta-données
+
+Il ne faut surtout pas oublier le fichier des métadonnées qui va permettre de recoder facilement tous les facteurs et de décoder les chiffres correspondant aux classes. On va donc le transformer au format R puis l'enregistrer également dans le dossier data. 
+
+
+```{r, eval = FALSE}
+# Lecture du fichier de métadonnées
+meta<-fread("tmp/varmod_LOGEMT_2018.csv")
+# Enregistrement dans le dossier data
+saveRDS(object = meta,
+        file = "data/menag2018_meta.RDS")
+```
+
+
+
+
+## Données géométriques
+
+Les contours des unités spatiales correspondant aux codes de l'INSEE sont produits par l'IGN et disponibles sur le site géoservice en accès libre :
+
+
+
+
+### Etape 1 : récupération du fonds IRIS au format shapefile
+
+On récupère le fichier des IRIS et on le décompresse : 
+ 
+https://geoservices.ign.fr/ressource/178706
+
+```{r}
+list.files("tmp/iris")
+```
+
+### Etape 2 : Importation et transformation au format sf
+
+La cartographie et plus généralement les opérations géométriques sur des données spatiales dans R peuvent facilement être effectuées avec le **package sf** (spatial features) qui crée des objets ubniques  rassemblant à la fois 
+
+- un tableau de données (l'équivalent du fichier .dbf)
+- une géométrie (l'équivalent du fichier .shp)
+- une projection (l'équivalent du fichier .prj)
+
+Lorsqu'on récupère des fonds de carte au format shapefile (.shp) ou dans d'autres formats standards comme GeoJson, la première tâche consiste donc à les convertir au formt sf afin de pouvoir les utiliser facilement dans R. L'importation se fait à l'aide de l'instruction `st_read` en indiquant juste le nom du fichier .shp à charger. Les autres fichiers (.dbf ou .proj) seront lus également et intégrés dans l'objet qui hérite de la double classe *data.frame* et *sf*
+ 
+ 
+
+```{r }
+library(sf)
+map <- st_read("tmp/iris/IRIS_GE.shp")
+dim(map)
+class(map)
+head(map,2)
+```
+
+
+### Etape 3 : Extraction des IRIS de la zone d'étude
+
+
+Le fichier comporte près de 50 000 unités spatiales qui correspondent soit à des communes suffisamment grandes pour être découpées en IRIS, soit à des communes non découpées. On reconnaît ces dernières au fait que leur code IRIS se termine par '00000'.
+
+Supposons qu'on veuille extraire le fonds de carte du Val de Marne. On va commencer par créer une variable DEPT en extrayant les dxeux premiers caractères du code communal, puis on va sélectionner le départements correspondant :
+
+```{r}
+map_iris<-map %>% mutate(DEPT = substr(INSEE_COM,1,2)) %>%
+             filter(DEPT %in% c("75","92","93","94"))
+dim(map_iris)
+class(map_iris)
+head(map_iris,2)
+```
+
+Le nouveau tableau ne comporte plus que 2752 unités spatiales et 8 colonnes au lieu de 7 puisqu' l'on a ajouté une colonne DEPT. On peut visualiser le résultat à l'aide de la fonction `geom_sf`du package **ggplot2** :
+
+
+```{r}
+ggplot(map_iris)+geom_sf(fill="lightyellow",col="red") + theme_void()
+```
+
+
+
+On sauvegarde le résultat dans notre dossier **data** au format interne de R :
+
+```{r}
+saveRDS(object = map_iris,
+        file = "data/map_iris.Rdata")
+```
+
+
+
+
+
+### Etape 4 : création d'un fonds de carte des communes
+
+Comme nous serons amenés à travailler à plusieurs échelles, nous produisons tout de suite un fonds de carte des communes en utilisant les fonctions d'agrégation du packages **sf** combinées avec celles de **dplyr**.
+
+```{r}
+map_com <- map_iris  %>% group_by(INSEE_COM) %>%
+                        summarise(NOM_COM = min(NOM_COM)) %>%
+                        st_as_sf()
+```
+on vérifie que l'agrégation s'est bien passée :
+
+```{r}
+ggplot(map_com)+geom_sf(fill="lightyellow",col="red") + theme_void()
+```
+Et on sauvegarde le fonds de carte
+
+```{r}
+saveRDS(object = map_com,
+        file = "data/map_com.Rdata")
+```
+
+### Etape 5 : création d'un fonds de carte par département
+
+Enfin, on construit un fonds de carte des départements selon la même procédure :
+
+```{r}
+map_dep <- map_iris  %>%     mutate(DEPT = substr(INSEE_COM,1,2))%>%
+                        group_by(DEPT) %>%
+                        summarise() %>%
+                        st_as_sf()
+ggplot(map_dep)+geom_sf(fill="lightyellow",col="red") + theme_void()
+saveRDS(object = map_dep,
+        file = "data/map_dep.Rdata")
+```
+
+### Etape 6: Superposition des trois fonds de carte
+
+On va utiliser la fonction `plot` du package **sf** qui permet de visualiser la variable *geometry* et facilite les superpositions avec l'instruction `add=TRUE`.
+
+```{r}
+par(mar=c(0,0,0,0))
+plot(map_iris$geometry, col= "lightyellow", border = "gray80", lwd=0.5)
+plot(map_com$geometry, col= NA, border = "gray50", lwd=1, add=TRUE)
+plot(map_dep$geometry, col= NA, border = "gray30", lwd=2, add=TRUE)
+```
+
+
+
+
+## Données sur le logement social
+
+
+Les données sur le logement social sont disponibles sur le site du ministère du développement durable :
+
+https://www.statistiques.developpement-durable.gouv.fr/le-parc-locatif-social-au-1er-janvier-2020-0
+
+Nous avions téléchargé en 2021 une version de la RPLS 2020 qui comportait des données précises de géolocalisation en latitude longitude mais ces informations semblent avoir disparu depuis. On reprend donc les fichiers complets
+
+### Etape 1 : téléchargement des données géolocalisées 
+
+On choisit l'année 2018 pour être le plus en phase possible avec le recensement (même si en pratique celui-ci porte sur 5 ans).
+
+Après téléchargement de l'année 2018, on récupère un dossier zippé avec des données par régions ou par département dans le cas de l'Ile de France.
+
+```{r,eval=FALSE}
+
+## Examen du contenu
+list.files("tmp/RPLS2020")
+```
+
+
+### Etape 2 : récupértation de Paris + PC
+
+```{r}
+dep75<-readRDS("tmp/RPLS2020/RPLS2020_75.RDS")
+dep92<-readRDS("tmp/RPLS2020/RPLS2020_92.RDS")
+dep93<-readRDS("tmp/RPLS2020/RPLS2020_93.RDS")
+dep94<-readRDS("tmp/RPLS2020/RPLS2020_94.RDS")
+tab<-rbind(dep75,dep92,dep93,dep94)
+tab<-as.data.table(tab)
+saveRDS(tab,"data/RPLS2020.RDS")
+```
+
+
+
+
+
+
+## Bilan et nettoyage
+
+
+Nous avons désormais un dossier **data** qui comporte :
+
+1. Le fichier des logements ordinaires en 2018 et ses métadonnées
+2. Les fonds de carte par iris, commune et département.
+3. Le fichier du RPLS pour l'année 2018
+
+
+```{r}
+list.files("data")
+```
+
+On peut alors décider de détruire le dossier **tmp** qui contient des dossiers très volumineux et pas forcément indispensables.
