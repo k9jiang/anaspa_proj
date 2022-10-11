@@ -1,6 +1,7 @@
 library(dplyr)
 library(knitr)
 library(questionr)
+library(mapsf)
 
 rpls2020 = readRDS('data/RPLS2020.RDS')
 
@@ -10,7 +11,7 @@ rpls2020$DEPCOM <- as.character(rpls2020$DEPCOM)
 rpls2020$DEP <- as.character(rpls2020$DEP)
 rpls2020$LIBCOM <- as.factor(rpls2020$LIBCOM)
 rpls2020$PLG_IRIS <-
-  paste(rpls2020$DEPCOM, rpls2020$PLG_IRIS, sep = "_")
+  paste(rpls2020$DEPCOM, rpls2020$PLG_IRIS, sep = "")
 rpls2020$SURFHAB <- as.numeric(rpls2020$SURFHAB)
 rpls2020$FINAN <- as.character(rpls2020$FINAN)
 
@@ -151,19 +152,13 @@ ex3a_ab <- ex3a_ab %>%
 
 plot(ex3a_ab$nblogsoc_rpls, ex3a_ab$nblogHLM_rp)
 
-rpls2020_zeb <-
-  rpls2020_zeb %>% mutate(IRIS = case_when(
-    CODEPOSTAL == "75014" ~ paste('75114', PLG_IRIS, sep = ''),
-    CODEPOSTAL != "75014" ~ paste(DEPCOM, PLG_IRIS, sep = '')
-  ))
-
-rpls2020_zeb$IRIS
-
 
 ex3a_aa <- rpls2020_zeb %>%
   filter(CONV == 1) %>%
-  select(DEPCOM, LIBCOM, IRIS) %>%
-  group_by(DEPCOM, LIBCOM, IRIS) %>% summarise(nblogsoc_rpls = n())
+  select(DEPCOM, LIBCOM, PLG_IRIS) %>%
+  group_by(DEPCOM, LIBCOM, PLG_IRIS) %>% summarise(nblogsoc_rpls = n())
+
+ex3a_aa$PLG_IRIS
 
 ex3a_bb <- rp2018_logement %>%
   filter(HLML == "1" & (COMMUNE %in%
@@ -173,14 +168,17 @@ ex3a_bb <- rp2018_logement %>%
   group_by(COMMUNE, IRIS) %>% summarise_all(sum) %>%
   mutate(nblogHLM_rp = round(IPONDL)) %>% select(-IPONDL)
 
+ex3a_bb$IRIS
+
 ex3a_aabb <-
   merge(
     x = ex3a_aa,
     y = ex3a_bb,
-    by.x = "IRIS",
+    by.x = "PLG_IRIS",
     by.y = "IRIS",
     all.x = T
   )
+
 ex3a_aabb <- ex3a_aabb %>%
   mutate(
     RPLS_RP = case_when(
@@ -235,3 +233,6 @@ tab_cond_wtd
 
 tab_pct_wtd = cprop(tab_cond_wtd)
 tab_pct_wtd
+
+
+
